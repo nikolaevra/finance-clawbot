@@ -22,6 +22,8 @@ from services.workflow_engine import (
 
 @tool_registry.register(
     name="workflow_run",
+    label="Run Workflow",
+    category="workflows",
     description=(
         "Trigger a named workflow pipeline. Workflows are multi-step "
         "deterministic pipelines that run in the background (e.g. "
@@ -78,6 +80,8 @@ def workflow_run(workflow_name: str, args: dict | None = None) -> dict:
 
 @tool_registry.register(
     name="workflow_status",
+    label="Check Workflow Status",
+    category="workflows",
     description=(
         "Check the current status of a workflow run, including per-step "
         "progress. Use this to report back to the user on running or "
@@ -115,6 +119,8 @@ def workflow_status(run_id: str) -> dict:
 
 @tool_registry.register(
     name="workflow_approve",
+    label="Approve Workflow",
+    category="workflows",
     description=(
         "Approve or reject a workflow that is paused at an approval gate. "
         "When a workflow pauses for approval, the user must explicitly "
@@ -157,6 +163,8 @@ def workflow_approve(run_id: str, approve: bool = True, comment: str | None = No
 
 @tool_registry.register(
     name="workflow_list",
+    label="List Workflows",
+    category="workflows",
     description=(
         "List all available workflow templates the user can trigger. "
         "Shows workflow names, descriptions, and whether they run on a schedule."

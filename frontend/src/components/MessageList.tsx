@@ -52,13 +52,21 @@ export default function MessageList({
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hasScrolledInitially = useRef(false);
+
+  // Scroll to bottom instantly when messages first appear (initial load)
+  useEffect(() => {
+    if (messages.length > 0 && !hasScrolledInitially.current) {
+      hasScrolledInitially.current = true;
+      bottomRef.current?.scrollIntoView();
+    }
+  }, [messages]);
 
   // Auto-scroll when new content arrives
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    // Only auto-scroll if user is near the bottom
     const isNearBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight <
       150;

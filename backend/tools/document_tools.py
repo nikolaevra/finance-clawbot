@@ -35,6 +35,8 @@ def _log_document_access(tool_name: str, source_file: str | None = None) -> None
 
 @tool_registry.register(
     name="document_list",
+    label="List Documents",
+    category="documents",
     description=(
         "List all documents the user has uploaded. Returns document names, "
         "types (PDF, DOCX, XLSX), sizes, and upload dates. Use this to see "
@@ -81,6 +83,8 @@ def document_list() -> dict:
 
 @tool_registry.register(
     name="document_read",
+    label="Read Document",
+    category="documents",
     description=(
         "Read the full extracted text content of a specific uploaded document. "
         "Provide the exact filename (e.g. 'report.pdf'). Use document_list "

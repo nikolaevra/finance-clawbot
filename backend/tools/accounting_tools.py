@@ -55,6 +55,8 @@ def _log_accounting_access(tool_name: str) -> None:
 
 @tool_registry.register(
     name="accounting_list_accounts",
+    label="List Accounts",
+    category="accounting",
     description=(
         "List all accounts with current balances from the user's connected "
         "accounting system (e.g. QuickBooks Online). Shows account name, "
@@ -134,6 +136,8 @@ def accounting_list_accounts(classification: str | None = None) -> dict:
 
 @tool_registry.register(
     name="accounting_search_transactions",
+    label="Search Transactions",
+    category="accounting",
     description=(
         "Search transactions from the user's connected accounting system "
         "(e.g. QuickBooks Online). Filter by date range, minimum/maximum "

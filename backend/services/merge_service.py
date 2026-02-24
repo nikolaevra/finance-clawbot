@@ -30,23 +30,32 @@ def create_link_token(
     user_id: str,
     organization_name: str = "My Organization",
     user_email: str = "user@example.com",
+    integration_slug: str | None = None,
 ) -> dict:
     """
     Create a Merge Link token so the frontend can open the
     Link modal for the end-user.
 
+    If *integration_slug* is provided (e.g. ``"quickbooks-online"`` or
+    ``"netsuite"``), Merge Link will skip the provider picker and go
+    straight to that integration's configuration form.
+
     Returns the full JSON response which includes ``link_token``.
     """
+    body: dict = {
+        "end_user_origin_id": user_id,
+        "end_user_organization_name": organization_name,
+        "end_user_email_address": user_email,
+        "categories": ["accounting"],
+        "link_expiry_mins": 60,
+    }
+    if integration_slug:
+        body["integration"] = integration_slug
+
     resp = requests.post(
         f"{ACCOUNTING_V1}/link-token",
         headers=_headers(),
-        json={
-            "end_user_origin_id": user_id,
-            "end_user_organization_name": organization_name,
-            "end_user_email_address": user_email,
-            "categories": ["accounting"],
-            "link_expiry_mins": 60,
-        },
+        json=body,
         timeout=30,
     )
     resp.raise_for_status()

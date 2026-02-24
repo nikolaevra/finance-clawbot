@@ -4,3 +4,5 @@ import tools.memory_tools  # noqa: F401
 import tools.document_tools  # noqa: F401
 import tools.accounting_tools  # noqa: F401
 import tools.workflow_tools  # noqa: F401
+import tools.skill_tools  # noqa: F401
+import tools.gmail_tools  # noqa: F401

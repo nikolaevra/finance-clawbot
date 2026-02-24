@@ -15,6 +15,7 @@ finance-clawbot/
 
 - Python 3.11+
 - Node.js 18+
+- Redis
 - A Supabase project (cloud)
 - An OpenAI API key
 
@@ -33,22 +34,31 @@ cp .env.example .env
 Run the SQL migration in your Supabase SQL Editor:
 - `backend/supabase/migrations/001_initial_schema.sql`
 
-### 3. Backend
+### 3. Install Dependencies
 
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-flask run --port 5000
+make install
 ```
 
-### 4. Frontend
+Or manually:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd backend && python -m venv venv && source venv/bin/activate && pip install -r requirements.txt
+cd frontend && npm install
 ```
 
-The frontend runs on `http://localhost:3000` and the backend on `http://localhost:5000`.
+### 4. Run Everything
+
+From the project root, start all services with a single command:
+
+```bash
+make dev
+```
+
+This launches Redis, the Flask backend (port 5001), the Celery worker + beat scheduler, and the Next.js frontend (port 3000). Ctrl+C stops all processes.
+
+To force-stop any leftover processes:
+
+```bash
+make stop
+```

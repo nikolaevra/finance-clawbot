@@ -89,10 +89,12 @@ export interface UserDocument {
 
 // ── Integration types ───────────────────────────────────────────────
 
+export type IntegrationProvider = "quickbooks" | "netsuite" | "gmail" | "float";
+
 export interface Integration {
   id: string;
   user_id: string;
-  provider: string;
+  provider: IntegrationProvider;
   integration_name: string;
   status: "active" | "syncing" | "error" | "disconnected";
   last_sync_at: string | null;
@@ -163,6 +165,29 @@ export interface WorkflowStepState {
   result: unknown;
   started_at: string | null;
   completed_at: string | null;
+}
+
+// ── Skill types ─────────────────────────────────────────────────────
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillContent {
+  name: string;
+  content: string;
+}
+
+export interface ToolCatalogEntry {
+  name: string;
+  label: string;
+  description: string;
+  category: string;
 }
 
 // ── Activity types ─────────────────────────────────────────────────

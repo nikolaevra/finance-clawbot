@@ -39,6 +39,8 @@ def _log_access(tool_name: str, source_file: str | None = None) -> None:
 
 @tool_registry.register(
     name="memory_append",
+    label="Append to Daily Log",
+    category="memory",
     description=(
         "Append a note to today's daily memory log. Use this to persist "
         "important decisions, facts, preferences, or context that should "
@@ -78,6 +80,8 @@ def memory_append(content: str) -> str:
 
 @tool_registry.register(
     name="memory_read",
+    label="Read Daily Log",
+    category="memory",
     description=(
         "Read a daily memory log. Defaults to today's log if no date is "
         "provided. Returns the full markdown content of the log file."
@@ -122,6 +126,8 @@ def memory_read(date: str | None = None) -> str:
 
 @tool_registry.register(
     name="memory_search",
+    label="Search Memories",
+    category="memory",
     description=(
         "Search across all memory files (daily logs, MEMORY.md, and uploaded "
         "documents) using hybrid keyword + semantic search. Returns the most "
@@ -167,6 +173,8 @@ def memory_search(query: str, limit: int = 10) -> dict:
 
 @tool_registry.register(
     name="memory_save",
+    label="Save Long-term Memory",
+    category="memory",
     description=(
         "Write to the long-term MEMORY.md file. Use this for curated "
         "durable facts: preferences, stable decisions, important notes "

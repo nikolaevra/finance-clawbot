@@ -8,6 +8,9 @@ import type {
   AccountingTransaction,
   WorkflowTemplate,
   WorkflowRun,
+  Skill,
+  SkillContent,
+  ToolCatalogEntry,
 } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
@@ -245,7 +248,8 @@ export async function fetchIntegrations(): Promise<Integration[]> {
 
 export async function createLinkToken(
   organizationName?: string,
-  email?: string
+  email?: string,
+  integrationSlug?: string
 ): Promise<{ link_token: string }> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/api/integrations/link-token`, {
@@ -254,6 +258,7 @@ export async function createLinkToken(
     body: JSON.stringify({
       organization_name: organizationName,
       email,
+      integration_slug: integrationSlug,
     }),
   });
   if (!res.ok) {
@@ -307,6 +312,33 @@ export async function deleteIntegration(id: string): Promise<void> {
     headers,
   });
   if (!res.ok) throw new Error("Failed to disconnect integration");
+}
+
+export async function connectFloat(apiToken: string): Promise<Integration> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/integrations/float`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ api_token: apiToken }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to connect Float");
+  }
+  return res.json();
+}
+
+export async function getGmailAuthUrl(): Promise<{ auth_url: string }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/integrations/gmail/auth-url`, {
+    method: "POST",
+    headers,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to get Gmail auth URL");
+  }
+  return res.json();
 }
 
 // ── Activity SSE ────────────────────────────────────────────────────
@@ -437,5 +469,99 @@ export async function cancelWorkflowRun(id: string): Promise<WorkflowRun> {
     headers,
   });
   if (!res.ok) throw new Error("Failed to cancel workflow");
+  return res.json();
+}
+
+// ── Skills API ──────────────────────────────────────────────────────
+
+export async function fetchSkills(): Promise<Skill[]> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/skills`, { headers });
+  if (!res.ok) throw new Error("Failed to fetch skills");
+  return res.json();
+}
+
+export async function fetchSkill(name: string): Promise<SkillContent> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/skills/${encodeURIComponent(name)}`,
+    { headers }
+  );
+  if (!res.ok) throw new Error("Failed to fetch skill");
+  return res.json();
+}
+
+export async function createSkill(
+  name: string,
+  content: string
+): Promise<Skill> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/skills`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to create skill");
+  }
+  return res.json();
+}
+
+export async function updateSkill(
+  name: string,
+  content: string
+): Promise<Skill> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/skills/${encodeURIComponent(name)}`,
+    {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ content }),
+    }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to update skill");
+  }
+  return res.json();
+}
+
+export async function deleteSkill(name: string): Promise<void> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/skills/${encodeURIComponent(name)}`,
+    {
+      method: "DELETE",
+      headers,
+    }
+  );
+  if (!res.ok) throw new Error("Failed to delete skill");
+}
+
+export async function toggleSkill(
+  name: string,
+  enabled: boolean
+): Promise<Skill> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/skills/${encodeURIComponent(name)}/toggle`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled }),
+    }
+  );
+  if (!res.ok) throw new Error("Failed to toggle skill");
+  return res.json();
+}
+
+// ── Tool Catalog API ────────────────────────────────────────────────
+
+export async function fetchToolCatalog(): Promise<ToolCatalogEntry[]> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/tools`, { headers });
+  if (!res.ok) throw new Error("Failed to fetch tool catalog");
   return res.json();
 }

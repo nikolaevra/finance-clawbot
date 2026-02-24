@@ -61,6 +61,7 @@ def create_app() -> Flask:
     from routes.integrations import integrations_bp
     from routes.workflows import workflows_bp
     from routes.activity import activity_bp
+    from routes.skills import skills_bp
 
     app.register_blueprint(conversations_bp, url_prefix='/api')
     app.register_blueprint(chat_bp, url_prefix='/api')
@@ -69,6 +70,7 @@ def create_app() -> Flask:
     app.register_blueprint(integrations_bp, url_prefix='/api')
     app.register_blueprint(workflows_bp, url_prefix='/api')
     app.register_blueprint(activity_bp, url_prefix='/api')
+    app.register_blueprint(skills_bp, url_prefix='/api')
 
     @app.route('/api/health')
     def health():

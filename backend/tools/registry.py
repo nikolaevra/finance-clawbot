@@ -3,24 +3,8 @@ Extensible tool registry for OpenAI function calling.
 
 Tools are registered as Python callables with an associated JSON Schema
 describing their parameters. The registry converts them to the format
-expected by the OpenAI Chat Completions API.
-
-To add a new tool:
-    from tools.registry import tool_registry
-
-    @tool_registry.register(
-        name="my_tool",
-        description="Does something useful",
-        parameters={
-            "type": "object",
-            "properties": {
-                "arg1": {"type": "string", "description": "First argument"},
-            },
-            "required": ["arg1"],
-        },
-    )
-    def my_tool(arg1: str) -> str:
-        return f"Result for {arg1}"
+expected by the OpenAI Chat Completions API and exposes a read-only
+catalog for the frontend.
 """
 from __future__ import annotations
 
@@ -35,6 +19,8 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     fn: Callable[..., Any]
+    label: str = ""
+    category: str = "general"
 
 
 class ToolRegistry:
@@ -46,6 +32,8 @@ class ToolRegistry:
         name: str,
         description: str,
         parameters: dict[str, Any],
+        label: str = "",
+        category: str = "general",
     ) -> Callable:
         """Decorator to register a tool function."""
 
@@ -55,6 +43,8 @@ class ToolRegistry:
                 description=description,
                 parameters=parameters,
                 fn=fn,
+                label=label or name.replace("_", " ").title(),
+                category=category,
             )
             return fn
 
@@ -93,6 +83,18 @@ class ToolRegistry:
                     "description": t.description,
                     "parameters": t.parameters,
                 },
+            }
+            for t in self._tools.values()
+        ]
+
+    def to_catalog(self) -> list[dict[str, str]]:
+        """Return a read-only catalog of all registered tools for the frontend."""
+        return [
+            {
+                "name": t.name,
+                "label": t.label,
+                "description": t.description,
+                "category": t.category,
             }
             for t in self._tools.values()
         ]

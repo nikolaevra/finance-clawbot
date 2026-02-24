@@ -1,27 +1,49 @@
-"""Gateway service — orchestration layer between chat and tool execution.
+"""Gateway service — central control plane for all message processing.
 
-Replicates the OpenClaw Gateway pattern: every tool call is routed through
-``dispatch_tool_call``, which decides whether to execute inline or hand off
-to the workflow engine / Celery.
+Every inbound message flows through ``Gateway.handle_message``, which owns
+the full lifecycle: session context, RAG retrieval, agent loop (LLM +
+tool calls), persistence, and event publishing.  HTTP routes and future
+channel adapters are thin wrappers that delegate here.
+
+Memory rules:
+  - Normal conversation turns NEVER mutate memory.
+  - Memory only changes via explicit tool calls (memory_append, memory_save).
+  - The pre-compaction flush is the only "automatic" behaviour, and even
+    that works by asking the model to call memory tools.
 """
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Iterator
 
-from tools.registry import tool_registry
+from flask import g
+
+from config import Config
 from services.event_bus import publish_event
-
-log = logging.getLogger(__name__)
+from services.supabase_service import get_supabase
+from services.openai_service import (
+    stream_chat,
+    build_messages,
+    generate_title,
+    count_tokens,
+    run_flush_completion,
+)
+from services.memory_service import ensure_daily_file, get_session_context
+from services.embedding_service import hybrid_search
 from services.workflow_engine import (
     get_pending_approvals,
     get_active_workflows,
 )
+from services.skill_service import load_skills_for_prompt
+from tools.registry import tool_registry
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Human-readable event descriptions
+# Human-readable event descriptions (unchanged)
 # ---------------------------------------------------------------------------
 
 _WORKFLOW_LABELS = {
@@ -47,11 +69,7 @@ def _workflow_label(name: str) -> str:
 
 
 def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | None], str]"]:
-    """Return (dispatch_message, complete_message_fn) for a tool call.
-
-    The complete_message_fn receives the raw result string and should return
-    a human-readable completion message.
-    """
+    """Return (dispatch_message, complete_message_fn) for a tool call."""
     if tool_name == "workflow_run":
         wf = args.get("workflow_name", "unknown")
         label = _workflow_label(wf)
@@ -85,7 +103,6 @@ def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | No
             lambda _r: "Retrieved workflow catalog",
         )
 
-    # Memory / document / accounting tools — short human labels
     _TOOL_LABELS: dict[str, tuple[str, str]] = {
         "memory_append": ("Saving to daily memory log", "Saved to memory"),
         "memory_read": ("Reading memory file", "Memory file retrieved"),
@@ -95,6 +112,12 @@ def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | No
         "document_read": ("Reading document content", "Document content retrieved"),
         "accounting_list_accounts": ("Fetching chart of accounts", "Accounts retrieved"),
         "accounting_search_transactions": ("Searching transactions", "Transaction search complete"),
+        "skill_list": ("Listing available skills", "Skills list retrieved"),
+        "skill_read": ("Reading skill instructions", "Skill loaded"),
+        "gmail_list_messages": ("Listing Gmail messages", "Gmail messages retrieved"),
+        "gmail_get_message": ("Reading Gmail message", "Gmail message retrieved"),
+        "gmail_send_message": ("Sending email via Gmail", "Email sent"),
+        "gmail_modify_labels": ("Updating Gmail labels", "Gmail labels updated"),
     }
     if tool_name in _TOOL_LABELS:
         dispatch, complete = _TOOL_LABELS[tool_name]
@@ -107,146 +130,551 @@ def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | No
 
 
 # ---------------------------------------------------------------------------
-# Tool dispatch
+# Gateway — central control plane
 # ---------------------------------------------------------------------------
 
-def dispatch_tool_call(
-    tool_name: str,
-    tool_args: str | dict,
-    user_id: str,
-    conversation_id: str | None = None,
-) -> str:
-    """Route a tool call to the appropriate executor.
+class Gateway:
+    """Central control plane that owns the full message lifecycle."""
 
-    - ``workflow_*`` tools are handled by the tool registry like everything
-      else (the workflow tools themselves call into the workflow engine).
-    - This function exists as a single choke-point for future extensions
-      (rate limiting, audit logging, A/B routing, etc.).
+    # ── Public entry point ─────────────────────────────────────────
 
-    Returns a JSON string with the tool result.
-    """
-    log.debug("dispatch tool=%s args=%s user=%s", tool_name, tool_args, user_id)
+    def handle_message(
+        self,
+        user_id: str,
+        conversation_id: str,
+        user_message: str,
+    ) -> Iterator[str]:
+        """Single entry point for ALL inbound messages.  Yields SSE events.
 
-    parsed_args = _parse_args(tool_args)
-    dispatch_msg, complete_fn = _describe_tool(tool_name, parsed_args)
-
-    publish_event(user_id, {
-        "type": "tool_dispatch",
-        "actor": "gateway",
-        "tool_name": tool_name,
-        "message": dispatch_msg,
-    })
-    try:
-        result = tool_registry.execute(tool_name, tool_args)
-        log.debug("tool=%s completed (%d chars)", tool_name, len(result) if result else 0)
+        The caller (HTTP route, future Slack/Telegram adapter, etc.) is
+        responsible only for authentication and protocol framing.
+        """
         publish_event(user_id, {
-            "type": "tool_complete",
+            "type": "message_received",
             "actor": "gateway",
-            "tool_name": tool_name,
-            "message": complete_fn(result),
+            "message": "Processing message",
         })
-        return result
-    except Exception as exc:
-        log.exception("tool=%s raised an exception", tool_name)
+
+        g.conversation_id = conversation_id
+
+        # 1. Session context (today + yesterday daily logs)
+        memory_context = self._load_session_context(user_id)
+
+        # 2. RAG retrieval
+        retrieved_context, rag_sources = self._retrieve_context(
+            user_id, user_message,
+        )
+
+        # 3. Workflow context (pending approvals, active runs)
+        workflow_context = ""
+        try:
+            workflow_context = self.build_workflow_context(user_id) or ""
+        except Exception:
+            log.exception("build_workflow_context failed for user=%s", user_id)
+
+        # 4. Skills context (user-defined skills for prompt injection)
+        skills_context = None
+        try:
+            skills_context = load_skills_for_prompt(user_id)
+        except Exception:
+            log.exception("load_skills_for_prompt failed for user=%s", user_id)
+
         publish_event(user_id, {
-            "type": "tool_error",
+            "type": "context_loaded",
             "actor": "gateway",
-            "tool_name": tool_name,
-            "message": f"{tool_name} failed: {exc}",
+            "message": "Context assembled",
         })
-        raise
 
+        # 5. Persist the inbound user message
+        self._save_message(conversation_id, "user", content=user_message)
 
-# ---------------------------------------------------------------------------
-# Context helpers (injected into the chat system prompt)
-# ---------------------------------------------------------------------------
+        # 6. Run the agent loop (stream LLM, execute tools, re-prompt)
+        yield from self._run_agent_loop(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message=user_message,
+            memory_context=memory_context,
+            retrieved_context=retrieved_context,
+            workflow_context=workflow_context,
+            skills_context=skills_context,
+            rag_sources=rag_sources,
+        )
 
-def build_workflow_context(user_id: str) -> str | None:
-    """Return a system-message block describing pending approvals and active
-    workflows so the AI can proactively inform the user.
+        publish_event(user_id, {
+            "type": "message_complete",
+            "actor": "gateway",
+            "message": "Response complete",
+        })
 
-    Returns ``None`` if there is nothing to report.
-    """
-    parts: list[str] = []
+    # ── Agent loop ─────────────────────────────────────────────────
 
-    try:
-        pending = get_pending_approvals(user_id)
-        if pending:
-            lines = ["[Pending Workflow Approvals]"]
-            for p in pending:
-                tpl = p.get("workflow_templates") or {}
-                name = tpl.get("name", "unknown")
-                steps = tpl.get("steps") or []
-                idx = p.get("current_step_index", 0)
-                prompt = ""
-                if idx < len(steps):
-                    approval = steps[idx].get("approval") or {}
-                    prompt = approval.get("prompt", "")
-                lines.append(
-                    f"- Workflow '{name}' (run {p['id']}) awaits approval: {prompt}"
+    def _run_agent_loop(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        user_message: str,
+        memory_context: str,
+        retrieved_context: str,
+        workflow_context: str,
+        skills_context: str | None,
+        rag_sources: list[dict],
+    ) -> Iterator[str]:
+        """SSE generator with tool-call loop and pre-compaction flush."""
+        all_sources: list[dict] = list(rag_sources)
+        seen_source_files: set[str] = {s["source_file"] for s in all_sources}
+
+        if rag_sources:
+            yield f"event: sources\ndata: {json.dumps({'sources': rag_sources})}\n\n"
+
+        max_tool_rounds = 10
+        rounds = 0
+        flush_done = False
+
+        while rounds < max_tool_rounds:
+            rounds += 1
+
+            history = self._get_history(conversation_id)
+
+            full_retrieved = retrieved_context
+            if workflow_context:
+                full_retrieved = (
+                    (retrieved_context + "\n\n" + workflow_context)
+                    if retrieved_context
+                    else workflow_context
                 )
-            parts.append("\n".join(lines))
-    except Exception:
-        log.exception("get_pending_approvals failed for user=%s", user_id)
 
-    try:
-        active = get_active_workflows(user_id)
-        running = [w for w in active if w["status"] == "running"]
-        if running:
-            lines = ["[Running Workflows]"]
-            for w in running:
-                tpl = w.get("workflow_templates") or {}
-                name = tpl.get("name", "unknown")
-                lines.append(f"- '{name}' (run {w['id']}) — step {w.get('current_step_index', '?')}")
-            parts.append("\n".join(lines))
-    except Exception:
-        log.exception("get_active_workflows failed for user=%s", user_id)
+            messages = build_messages(
+                history,
+                memory_context=memory_context,
+                retrieved_context=full_retrieved,
+                history_hours=Config.CHAT_HISTORY_HOURS,
+                skills_context=skills_context,
+            )
 
-    return "\n\n".join(parts) if parts else None
+            # Pre-compaction flush (once per request)
+            if not flush_done:
+                token_count = count_tokens(messages)
+                if token_count >= Config.MEMORY_FLUSH_TOKEN_THRESHOLD:
+                    flush_done = True
+                    try:
+                        self._run_silent_flush(conversation_id, memory_context)
+                    except Exception:
+                        log.exception("Silent flush failed for conv=%s", conversation_id)
+                    history = self._get_history(conversation_id)
+                    messages = build_messages(
+                        history,
+                        memory_context=memory_context,
+                        retrieved_context=full_retrieved,
+                        history_hours=Config.CHAT_HISTORY_HOURS,
+                        skills_context=skills_context,
+                    )
 
+            publish_event(user_id, {
+                "type": "agent_streaming",
+                "actor": "gateway",
+                "message": f"Streaming response (round {rounds})",
+            })
 
-def build_workflow_events(run: dict) -> list[dict]:
-    """Convert a workflow run dict into structured SSE event payloads."""
-    events: list[dict] = []
-    tpl = run.get("workflow_templates") or {}
+            # Stream from OpenAI
+            final_data = None
+            for event_str in stream_chat(messages):
+                yield event_str
 
-    if run["status"] == "pending" or run["status"] == "running":
-        events.append({
-            "type": "workflow_started",
-            "run_id": run["id"],
-            "workflow": tpl.get("name", "unknown"),
-            "status": run["status"],
+                if event_str.startswith("event: done"):
+                    data_line = event_str.split("data: ", 1)[1].split("\n")[0]
+                    final_data = json.loads(data_line)
+
+                if event_str.startswith("event: error"):
+                    return
+
+            if final_data is None:
+                return
+
+            # Persist assistant message
+            save_kwargs = {
+                "content": final_data.get("content") or None,
+                "thinking": final_data.get("thinking") or None,
+                "tool_calls": final_data.get("tool_calls"),
+                "model": Config.OPENAI_MODEL,
+            }
+            if not final_data.get("tool_calls") and all_sources:
+                save_kwargs["sources"] = all_sources
+            self._save_message(conversation_id, "assistant", **save_kwargs)
+
+            # If no tool calls, we're done — handle title generation
+            tool_calls = final_data.get("tool_calls")
+            if not tool_calls:
+                try:
+                    if self._is_first_exchange(conversation_id):
+                        self._update_title(
+                            conversation_id,
+                            user_id,
+                            user_message,
+                            final_data.get("content", ""),
+                        )
+                        sb = get_supabase()
+                        updated = (
+                            sb.table("conversations")
+                            .select("title")
+                            .eq("id", conversation_id)
+                            .single()
+                            .execute()
+                        )
+                        if updated.data:
+                            yield f"event: title\ndata: {json.dumps({'title': updated.data['title']})}\n\n"
+                except Exception:
+                    log.exception("Title generation failed for conv=%s", conversation_id)
+                return
+
+            # Execute tool calls and loop
+            for tc in tool_calls:
+                tool_name = tc["function"]["name"]
+                tool_args = tc["function"]["arguments"]
+                tool_call_id = tc["id"]
+
+                result_str = self.dispatch_tool_call(
+                    tool_name, tool_args, user_id, conversation_id,
+                )
+
+                self._save_message(
+                    conversation_id,
+                    "tool",
+                    content=result_str,
+                    tool_call_id=tool_call_id,
+                )
+
+                self._collect_tool_sources(
+                    tool_name, tool_args, result_str,
+                    all_sources, seen_source_files,
+                )
+
+                yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': tool_call_id, 'name': tool_name, 'result': result_str})}\n\n"
+
+            if len(all_sources) > len(rag_sources):
+                yield f"event: sources\ndata: {json.dumps({'sources': all_sources})}\n\n"
+
+    # ── Session / persistence ──────────────────────────────────────
+
+    @staticmethod
+    def _save_message(conversation_id: str, role: str, **kwargs) -> dict:
+        """Insert a message row and return it."""
+        sb = get_supabase()
+        data = {"conversation_id": conversation_id, "role": role}
+        data.update({k: v for k, v in kwargs.items() if v is not None})
+        result = sb.table("messages").insert(data).execute()
+        return result.data[0]
+
+    @staticmethod
+    def _get_history(conversation_id: str) -> list[dict]:
+        """Fetch messages within the context window (last N hours)."""
+        sb = get_supabase()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=Config.CHAT_HISTORY_HOURS)).isoformat()
+        result = (
+            sb.table("messages")
+            .select("*")
+            .eq("conversation_id", conversation_id)
+            .gte("created_at", cutoff)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return result.data
+
+    @staticmethod
+    def _is_first_exchange(conversation_id: str) -> bool:
+        """True if only one user message exists in this conversation."""
+        sb = get_supabase()
+        result = (
+            sb.table("messages")
+            .select("id")
+            .eq("conversation_id", conversation_id)
+            .eq("role", "user")
+            .execute()
+        )
+        return len(result.data) == 1
+
+    @staticmethod
+    def _update_title(conversation_id: str, user_id: str, user_msg: str, assistant_msg: str):
+        """Generate and set a conversation title after the first exchange."""
+        title = generate_title(user_msg, assistant_msg)
+        sb = get_supabase()
+        sb.table("conversations").update({"title": title}).eq("id", conversation_id).eq("user_id", user_id).execute()
+
+    # ── Context assembly ───────────────────────────────────────────
+
+    @staticmethod
+    def _load_session_context(user_id: str) -> str:
+        """Create today's daily file (idempotent) and return recent daily context."""
+        memory_context = ""
+        try:
+            ensure_daily_file(user_id)
+        except Exception:
+            log.exception("ensure_daily_file failed for user=%s", user_id)
+        try:
+            memory_context = get_session_context(user_id)
+        except Exception:
+            log.exception("get_session_context failed for user=%s", user_id)
+        return memory_context
+
+    @staticmethod
+    def _retrieve_context(user_id: str, query: str) -> tuple[str, list[dict]]:
+        """Run RAG retrieval and return (context_text, source_refs)."""
+        retrieved_context = ""
+        rag_sources: list[dict] = []
+        try:
+            today = date.today()
+            yesterday = today - timedelta(days=1)
+            skip_files = {
+                f"daily/{today.isoformat()}.md",
+                f"daily/{yesterday.isoformat()}.md",
+            }
+
+            rag_results = hybrid_search(user_id, query, Config.RAG_RESULT_LIMIT)
+
+            filtered = [
+                r for r in rag_results
+                if r["source_file"] not in skip_files
+                and r.get("score", 0) >= Config.RAG_MIN_SCORE
+            ]
+
+            if filtered:
+                parts = []
+                seen_sources: set[str] = set()
+                for r in filtered:
+                    parts.append(f"<source: {r['source_file']}>\n{r['chunk_text']}")
+                    if r["source_file"] not in seen_sources:
+                        seen_sources.add(r["source_file"])
+                        rag_sources.append({
+                            "source_file": r["source_file"],
+                            "score": round(r.get("score", 0), 4),
+                        })
+                retrieved_context = "\n\n".join(parts)
+        except Exception:
+            log.exception("RAG retrieval failed for user=%s", user_id)
+        return retrieved_context, rag_sources
+
+    # ── Pre-compaction flush ───────────────────────────────────────
+
+    def _run_silent_flush(self, conversation_id: str, memory_context: str) -> None:
+        """Silent flush turn: ask the model to persist durable facts via memory tools."""
+        g.conversation_id = conversation_id
+
+        history = self._get_history(conversation_id)
+        messages = build_messages(
+            history,
+            memory_context=memory_context,
+            history_hours=Config.CHAT_HISTORY_HOURS,
+        )
+
+        tool_calls = run_flush_completion(messages)
+        if not tool_calls:
+            return
+
+        self._save_message(
+            conversation_id,
+            "assistant",
+            tool_calls=tool_calls,
+            model=Config.OPENAI_MODEL,
+        )
+
+        for tc in tool_calls:
+            tool_name = tc["function"]["name"]
+            tool_args = tc["function"]["arguments"]
+            tool_call_id = tc["id"]
+
+            result_str = tool_registry.execute(tool_name, tool_args)
+
+            self._save_message(
+                conversation_id,
+                "tool",
+                content=result_str,
+                tool_call_id=tool_call_id,
+            )
+
+    # ── Source tracking ────────────────────────────────────────────
+
+    @staticmethod
+    def _collect_tool_sources(
+        tool_name: str,
+        tool_args: str | dict,
+        result_str: str,
+        all_sources: list[dict],
+        seen_source_files: set[str],
+    ) -> None:
+        """Extract document/memory source references from tool calls."""
+        try:
+            args = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+
+        new_sources: list[str] = []
+
+        if tool_name == "document_read":
+            filename = args.get("filename", "")
+            if filename:
+                new_sources.append(f"documents/{filename}")
+        elif tool_name == "memory_read":
+            date_str = args.get("date")
+            if date_str:
+                new_sources.append(f"daily/{date_str}.md")
+            else:
+                new_sources.append(f"daily/{date.today().isoformat()}.md")
+        elif tool_name == "memory_search":
+            try:
+                result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
+                for r in result_data.get("results", []):
+                    sf = r.get("source_file", "")
+                    if sf:
+                        new_sources.append(sf)
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
+        elif tool_name in ("accounting_list_accounts", "accounting_search_transactions"):
+            new_sources.append("accounting/integration")
+        elif tool_name.startswith("gmail_"):
+            new_sources.append("gmail/integration")
+
+        for sf in new_sources:
+            if sf not in seen_source_files:
+                seen_source_files.add(sf)
+                all_sources.append({"source_file": sf, "score": 1.0})
+
+    # ── Tool dispatch ──────────────────────────────────────────────
+
+    def dispatch_tool_call(
+        self,
+        tool_name: str,
+        tool_args: str | dict,
+        user_id: str,
+        conversation_id: str | None = None,
+    ) -> str:
+        """Route a tool call to the appropriate executor.
+
+        Single choke-point for rate limiting, audit logging, A/B routing.
+        """
+        log.debug("dispatch tool=%s args=%s user=%s", tool_name, tool_args, user_id)
+
+        parsed_args = _parse_args(tool_args)
+        dispatch_msg, complete_fn = _describe_tool(tool_name, parsed_args)
+
+        publish_event(user_id, {
+            "type": "tool_dispatch",
+            "actor": "gateway",
+            "tool_name": tool_name,
+            "message": dispatch_msg,
         })
+        try:
+            result = tool_registry.execute(tool_name, tool_args)
+            log.debug("tool=%s completed (%d chars)", tool_name, len(result) if result else 0)
+            publish_event(user_id, {
+                "type": "tool_complete",
+                "actor": "gateway",
+                "tool_name": tool_name,
+                "message": complete_fn(result),
+            })
+            return result
+        except Exception as exc:
+            log.exception("tool=%s raised an exception", tool_name)
+            publish_event(user_id, {
+                "type": "tool_error",
+                "actor": "gateway",
+                "tool_name": tool_name,
+                "message": f"{tool_name} failed: {exc}",
+            })
+            raise
 
-    if run["status"] == "paused":
-        steps = tpl.get("steps") or []
-        idx = run.get("current_step_index", 0)
-        prompt = ""
-        if idx < len(steps):
-            approval = steps[idx].get("approval") or {}
-            prompt = approval.get("prompt", "Approve this step?")
-        events.append({
-            "type": "workflow_approval_needed",
-            "run_id": run["id"],
-            "workflow": tpl.get("name", "unknown"),
-            "prompt": prompt,
-            "resume_token": run.get("resume_token"),
-        })
+    # ── Workflow context helpers ────────────────────────────────────
 
-    if run["status"] == "completed":
-        events.append({
-            "type": "workflow_completed",
-            "run_id": run["id"],
-            "workflow": tpl.get("name", "unknown"),
-            "steps_state": run.get("steps_state"),
-        })
+    def build_workflow_context(self, user_id: str) -> str | None:
+        """System-message block describing pending approvals and active workflows."""
+        parts: list[str] = []
 
-    if run["status"] == "failed":
-        events.append({
-            "type": "workflow_failed",
-            "run_id": run["id"],
-            "workflow": tpl.get("name", "unknown"),
-            "error": run.get("error"),
-        })
+        try:
+            pending = get_pending_approvals(user_id)
+            if pending:
+                lines = ["[Pending Workflow Approvals]"]
+                for p in pending:
+                    tpl = p.get("workflow_templates") or {}
+                    name = tpl.get("name", "unknown")
+                    steps = tpl.get("steps") or []
+                    idx = p.get("current_step_index", 0)
+                    prompt = ""
+                    if idx < len(steps):
+                        approval = steps[idx].get("approval") or {}
+                        prompt = approval.get("prompt", "")
+                    lines.append(
+                        f"- Workflow '{name}' (run {p['id']}) awaits approval: {prompt}"
+                    )
+                parts.append("\n".join(lines))
+        except Exception:
+            log.exception("get_pending_approvals failed for user=%s", user_id)
 
-    return events
+        try:
+            active = get_active_workflows(user_id)
+            running = [w for w in active if w["status"] == "running"]
+            if running:
+                lines = ["[Running Workflows]"]
+                for w in running:
+                    tpl = w.get("workflow_templates") or {}
+                    name = tpl.get("name", "unknown")
+                    lines.append(f"- '{name}' (run {w['id']}) — step {w.get('current_step_index', '?')}")
+                parts.append("\n".join(lines))
+        except Exception:
+            log.exception("get_active_workflows failed for user=%s", user_id)
+
+        return "\n\n".join(parts) if parts else None
+
+    @staticmethod
+    def build_workflow_events(run: dict) -> list[dict]:
+        """Convert a workflow run dict into structured SSE event payloads."""
+        events: list[dict] = []
+        tpl = run.get("workflow_templates") or {}
+
+        if run["status"] in ("pending", "running"):
+            events.append({
+                "type": "workflow_started",
+                "run_id": run["id"],
+                "workflow": tpl.get("name", "unknown"),
+                "status": run["status"],
+            })
+
+        if run["status"] == "paused":
+            steps = tpl.get("steps") or []
+            idx = run.get("current_step_index", 0)
+            prompt = ""
+            if idx < len(steps):
+                approval = steps[idx].get("approval") or {}
+                prompt = approval.get("prompt", "Approve this step?")
+            events.append({
+                "type": "workflow_approval_needed",
+                "run_id": run["id"],
+                "workflow": tpl.get("name", "unknown"),
+                "prompt": prompt,
+                "resume_token": run.get("resume_token"),
+            })
+
+        if run["status"] == "completed":
+            events.append({
+                "type": "workflow_completed",
+                "run_id": run["id"],
+                "workflow": tpl.get("name", "unknown"),
+                "steps_state": run.get("steps_state"),
+            })
+
+        if run["status"] == "failed":
+            events.append({
+                "type": "workflow_failed",
+                "run_id": run["id"],
+                "workflow": tpl.get("name", "unknown"),
+                "error": run.get("error"),
+            })
+
+        return events
+
+
+# Module-level singleton
+gateway = Gateway()
+
+# Backwards-compatible top-level aliases for any external callers
+dispatch_tool_call = gateway.dispatch_tool_call
+build_workflow_context = gateway.build_workflow_context
+build_workflow_events = Gateway.build_workflow_events

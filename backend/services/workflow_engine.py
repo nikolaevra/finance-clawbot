@@ -63,7 +63,7 @@ def start_workflow(
         "user_id": user_id,
         "template_id": template_id,
         "conversation_id": conversation_id,
-        "status": "pending",
+        "status": "running",
         "current_step_index": 0,
         "steps_state": steps_state,
         "trigger": trigger,

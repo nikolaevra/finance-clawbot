@@ -26,11 +26,22 @@ _TOOL_TRANSPARENCY_INSTRUCTION = (
 )
 
 
+_SKILLS_INSTRUCTION = (
+    "## Skills\n"
+    "Before replying, scan the skills list below. If exactly one skill "
+    "clearly applies to the user's request, use the skill_read tool to "
+    "read its full instructions, then follow them. If multiple could "
+    "apply, choose the most specific one. If none clearly apply, proceed "
+    "normally without reading any skill.\n\n"
+)
+
+
 def build_messages(
     history: list[dict],
     memory_context: str | None = None,
     retrieved_context: str | None = None,
     history_hours: int | None = None,
+    skills_context: str | None = None,
 ) -> list[dict]:
     """
     Convert DB message rows into the OpenAI messages format.
@@ -45,6 +56,9 @@ def build_messages(
     If history_hours is provided, a system message is injected informing the
     model that the conversation history only covers the last N hours, so it
     should rely on memory tools for older context.
+
+    If skills_context is provided, it is injected as a system message with
+    the compact skills list so the agent can discover and activate skills.
     """
     messages: list[dict] = []
 
@@ -53,6 +67,13 @@ def build_messages(
         'role': 'system',
         'content': _TOOL_TRANSPARENCY_INSTRUCTION,
     })
+
+    # Inject skills list so the agent can discover user-defined skills
+    if skills_context:
+        messages.append({
+            'role': 'system',
+            'content': _SKILLS_INSTRUCTION + skills_context,
+        })
 
     # Inject memory context as the first system message
     if memory_context:

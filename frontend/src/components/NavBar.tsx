@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Brain, MessageSquare, FileText, Link2, LogOut, Receipt, Workflow } from "lucide-react";
+import { Brain, MessageSquare, FileText, Link2, LogOut, Receipt, Workflow, Sparkles } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import ThemeToggle from "./ThemeToggle";
 
@@ -37,6 +37,12 @@ const NAV_ITEMS = [
     activeColor: "text-amber-400",
   },
   {
+    label: "Skills",
+    href: "/chat/skills",
+    icon: Sparkles,
+    activeColor: "text-violet-400",
+  },
+  {
     label: "Integrations",
     href: "/chat/integrations",
     icon: Link2,
@@ -57,7 +63,6 @@ export default function NavBar() {
 
   const isActive = (href: string) => {
     if (href === "/chat") {
-      // Chat is active only for exact /chat or /chat/{uuid} (not sub-sections)
       return (
         pathname === "/chat" ||
         (pathname.startsWith("/chat/") &&
@@ -65,6 +70,7 @@ export default function NavBar() {
           !pathname.startsWith("/chat/documents") &&
           !pathname.startsWith("/chat/transactions") &&
           !pathname.startsWith("/chat/workflows") &&
+          !pathname.startsWith("/chat/skills") &&
           !pathname.startsWith("/chat/integrations"))
       );
     }

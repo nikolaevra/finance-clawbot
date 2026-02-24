@@ -181,38 +181,67 @@ def upsert_accounting_data(user_id: str, input_data: dict | None = None) -> dict
 # Top-level Celery tasks (for direct invocation / Celery Beat)
 # ---------------------------------------------------------------------------
 
+def _sync_merge(integration_id: str, user_id: str) -> dict:
+    """Merge.dev sync pipeline (QBO / NetSuite)."""
+    sb = get_supabase()
+    int_result = (
+        sb.table("integrations")
+        .select("account_token")
+        .eq("id", integration_id)
+        .single()
+        .execute()
+    )
+    account_token = int_result.data["account_token"]
+
+    pipe = {"integration_id": integration_id, "account_token": account_token}
+    pipe = fetch_merge_accounts(user_id, pipe)
+    log.info("integration=%s fetched %d accounts", integration_id, pipe.get("accounts_count", 0))
+    pipe = fetch_merge_transactions(user_id, pipe)
+    log.info("integration=%s fetched %d transactions", integration_id, pipe.get("transactions_count", 0))
+    result = upsert_accounting_data(user_id, pipe)
+    return result
+
+
 @celery.task(name="tasks.sync_tasks.sync_integration")
 def sync_integration(integration_id: str, user_id: str) -> dict:
-    """Full sync for a single integration — replaces the old synchronous route."""
+    """Full sync for a single integration — dispatches to the correct
+    provider-specific sync based on the ``provider`` column."""
     log.info("sync_integration started integration=%s user=%s", integration_id, user_id)
     sb = get_supabase()
-    sb.table("integrations").update({"status": "syncing"}).eq("id", integration_id).execute()
 
-    try:
-        int_result = (
-            sb.table("integrations")
-            .select("account_token")
-            .eq("id", integration_id)
-            .single()
-            .execute()
-        )
-        account_token = int_result.data["account_token"]
+    int_result = (
+        sb.table("integrations")
+        .select("provider")
+        .eq("id", integration_id)
+        .single()
+        .execute()
+    )
+    provider = (int_result.data or {}).get("provider", "quickbooks")
 
-        pipe = {"integration_id": integration_id, "account_token": account_token}
-        pipe = fetch_merge_accounts(user_id, pipe)
-        log.info("integration=%s fetched %d accounts", integration_id, pipe.get("accounts_count", 0))
-        pipe = fetch_merge_transactions(user_id, pipe)
-        log.info("integration=%s fetched %d transactions", integration_id, pipe.get("transactions_count", 0))
-        result = upsert_accounting_data(user_id, pipe)
-        log.info("integration=%s sync complete: %s", integration_id, result)
-        return result
-    except Exception as exc:
-        log.exception("sync_integration failed integration=%s user=%s", integration_id, user_id)
-        sb.table("integrations").update({
-            "status": "error",
-            "last_sync_status": str(exc)[:500],
-        }).eq("id", integration_id).execute()
-        raise
+    if provider in ("quickbooks", "netsuite"):
+        sb.table("integrations").update({"status": "syncing"}).eq("id", integration_id).execute()
+        try:
+            result = _sync_merge(integration_id, user_id)
+            log.info("integration=%s sync complete: %s", integration_id, result)
+            return result
+        except Exception as exc:
+            log.exception("sync_integration failed integration=%s", integration_id)
+            sb.table("integrations").update({
+                "status": "error",
+                "last_sync_status": str(exc)[:500],
+            }).eq("id", integration_id).execute()
+            raise
+
+    elif provider == "float":
+        from tasks.float_sync_tasks import sync_float
+        return sync_float(integration_id, user_id)
+
+    elif provider == "gmail":
+        from tasks.gmail_sync_tasks import sync_gmail
+        return sync_gmail(integration_id, user_id)
+
+    else:
+        raise RuntimeError(f"Unknown provider: {provider}")
 
 
 @celery.task(name="tasks.sync_tasks.sync_all_active_integrations")
