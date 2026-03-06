@@ -74,7 +74,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   spend: "Spend Management",
 };
 
-function timeAgo(dateStr: string | null): string {
+export function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "Never";
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60_000);
@@ -86,7 +86,7 @@ function timeAgo(dateStr: string | null): string {
   return `${days}d ago`;
 }
 
-function providerLabel(provider: string): string {
+export function providerLabel(provider: string): string {
   const match = INTEGRATION_CATALOG.find((d) => d.slug === provider);
   return match?.name ?? provider;
 }

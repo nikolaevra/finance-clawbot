@@ -13,7 +13,7 @@ interface MessageListProps {
   conversationId?: string | null;
 }
 
-function formatDayLabel(date: Date): string {
+export function formatDayLabel(date: Date): string {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const msgDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -31,7 +31,7 @@ function formatDayLabel(date: Date): string {
   });
 }
 
-function dayKey(dateStr: string): string {
+export function dayKey(dateStr: string): string {
   const d = new Date(dateStr);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

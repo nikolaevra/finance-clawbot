@@ -57,7 +57,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function getToolSourceFiles(
+export function getToolSourceFiles(
   toolMeta: ToolMeta,
   content: string
 ): string[] {
@@ -85,7 +85,7 @@ function getToolSourceFiles(
   return [];
 }
 
-function toolActionLabel(toolName: string): string {
+export function toolActionLabel(toolName: string): string {
   switch (toolName) {
     case "document_read":
       return "Read document";
@@ -100,17 +100,17 @@ function toolActionLabel(toolName: string): string {
   }
 }
 
-function humanizeToolName(toolName: string): string {
+export function humanizeToolName(toolName: string): string {
   return toolName.replaceAll("_", " ");
 }
 
-function oneLine(text: string, maxLen = 90): string {
+export function oneLine(text: string, maxLen = 90): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) return "";
   return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
 }
 
-function toolResultPreview(toolMeta: ToolMeta | undefined, content: string): string {
+export function toolResultPreview(toolMeta: ToolMeta | undefined, content: string): string {
   const toolName = toolMeta?.name ?? "tool";
   const prettyTool = humanizeToolName(toolName);
 

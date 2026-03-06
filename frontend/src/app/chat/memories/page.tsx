@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Brain, Calendar, FileText, Loader2 } from "lucide-react";
 import { useMemories } from "@/lib/hooks/useMemories";
 
-function groupMemoriesByDate(
+export function groupMemoriesByDate(
   daily: { date: string; source_file: string; access_count: number }[]
 ) {
   const now = new Date();

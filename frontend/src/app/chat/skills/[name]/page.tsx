@@ -25,7 +25,7 @@ type ActiveMention = {
   query: string;
 };
 
-function getActiveMentionAtCursor(
+export function getActiveMentionAtCursor(
   text: string,
   cursor: number
 ): ActiveMention | null {
