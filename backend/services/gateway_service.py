@@ -30,7 +30,14 @@ from services.openai_service import (
     count_tokens,
     run_flush_completion,
 )
-from services.memory_service import ensure_daily_file, get_session_context
+from services.memory_service import (
+    ensure_daily_file,
+    get_session_context,
+    load_bootstrap_files,
+    ensure_bootstrap_files,
+    has_bootstrap_file,
+    delete_bootstrap_file,
+)
 from services.embedding_service import hybrid_search
 from services.workflow_engine import (
     get_pending_approvals,
@@ -47,11 +54,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _WORKFLOW_LABELS = {
-    "sync_accounting": "Sync Accounting Data",
-    "categorize_transactions": "Categorize Transactions",
-    "generate_financial_report": "Generate Financial Report",
     "memory_consolidation": "Memory Consolidation",
-    "detect_anomalies": "Detect Anomalies",
 }
 
 
@@ -117,7 +120,11 @@ def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | No
         "gmail_list_messages": ("Listing Gmail messages", "Gmail messages retrieved"),
         "gmail_get_message": ("Reading Gmail message", "Gmail message retrieved"),
         "gmail_send_message": ("Sending email via Gmail", "Email sent"),
+        "gmail_create_draft": ("Drafting email in Gmail", "Gmail draft created"),
+        "gmail_reply_message": ("Sending reply via Gmail", "Gmail reply sent"),
+        "gmail_forward_message": ("Forwarding email via Gmail", "Email forwarded"),
         "gmail_modify_labels": ("Updating Gmail labels", "Gmail labels updated"),
+        "accounting_create_bill": ("Creating bill in accounting system", "Bill created"),
     }
     if tool_name in _TOOL_LABELS:
         dispatch, complete = _TOOL_LABELS[tool_name]
@@ -179,16 +186,25 @@ class Gateway:
         except Exception:
             log.exception("load_skills_for_prompt failed for user=%s", user_id)
 
+        # 5. Bootstrap files (SOUL, IDENTITY, USER, AGENTS, TOOLS, BOOTSTRAP)
+        bootstrap_context = ""
+        is_first_run = False
+        try:
+            is_first_run = has_bootstrap_file(user_id)
+            bootstrap_context = load_bootstrap_files(user_id)
+        except Exception:
+            log.exception("load_bootstrap_files failed for user=%s", user_id)
+
         publish_event(user_id, {
             "type": "context_loaded",
             "actor": "gateway",
             "message": "Context assembled",
         })
 
-        # 5. Persist the inbound user message
+        # 6. Persist the inbound user message
         self._save_message(conversation_id, "user", content=user_message)
 
-        # 6. Run the agent loop (stream LLM, execute tools, re-prompt)
+        # 7. Run the agent loop (stream LLM, execute tools, re-prompt)
         yield from self._run_agent_loop(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -197,8 +213,18 @@ class Gateway:
             retrieved_context=retrieved_context,
             workflow_context=workflow_context,
             skills_context=skills_context,
+            bootstrap_context=bootstrap_context,
             rag_sources=rag_sources,
         )
+
+        # 8. After the first successful onboarding exchange, remove BOOTSTRAP.md
+        #    so subsequent sessions skip the onboarding script.
+        if is_first_run:
+            try:
+                delete_bootstrap_file(user_id, "BOOTSTRAP.md")
+                log.info("Removed BOOTSTRAP.md after first-run for user=%s", user_id)
+            except Exception:
+                log.exception("Failed to remove BOOTSTRAP.md for user=%s", user_id)
 
         publish_event(user_id, {
             "type": "message_complete",
@@ -218,6 +244,7 @@ class Gateway:
         retrieved_context: str,
         workflow_context: str,
         skills_context: str | None,
+        bootstrap_context: str = "",
         rag_sources: list[dict],
     ) -> Iterator[str]:
         """SSE generator with tool-call loop and pre-compaction flush."""
@@ -250,6 +277,7 @@ class Gateway:
                 retrieved_context=full_retrieved,
                 history_hours=Config.CHAT_HISTORY_HOURS,
                 skills_context=skills_context,
+                bootstrap_context=bootstrap_context or None,
             )
 
             # Pre-compaction flush (once per request)
@@ -268,6 +296,7 @@ class Gateway:
                         retrieved_context=full_retrieved,
                         history_hours=Config.CHAT_HISTORY_HOURS,
                         skills_context=skills_context,
+                        bootstrap_context=bootstrap_context or None,
                     )
 
             publish_event(user_id, {
@@ -327,8 +356,17 @@ class Gateway:
                     log.exception("Title generation failed for conv=%s", conversation_id)
                 return
 
-            # Execute tool calls and loop
+            # Partition tool calls into safe and needs-approval
+            safe_calls = []
+            approval_calls = []
             for tc in tool_calls:
+                if tool_registry.needs_approval(tc["function"]["name"]):
+                    approval_calls.append(tc)
+                else:
+                    safe_calls.append(tc)
+
+            # Execute safe tool calls immediately
+            for tc in safe_calls:
                 tool_name = tc["function"]["name"]
                 tool_args = tc["function"]["arguments"]
                 tool_call_id = tc["id"]
@@ -351,8 +389,111 @@ class Gateway:
 
                 yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': tool_call_id, 'name': tool_name, 'result': result_str})}\n\n"
 
+            # If any tools need approval, pause the loop
+            if approval_calls:
+                pending = []
+                for tc in approval_calls:
+                    name = tc["function"]["name"]
+                    tool_obj = tool_registry.get_tool(name)
+                    args = _parse_args(tc["function"]["arguments"])
+                    pending.append({
+                        "id": tc["id"],
+                        "name": name,
+                        "label": tool_obj.label if tool_obj else name,
+                        "args": args,
+                    })
+
+                yield f"event: tool_approval_needed\ndata: {json.dumps({'conversation_id': conversation_id, 'tool_calls': pending})}\n\n"
+                return
+
             if len(all_sources) > len(rag_sources):
                 yield f"event: sources\ndata: {json.dumps({'sources': all_sources})}\n\n"
+
+    # ── Tool approval resume ────────────────────────────────────────
+
+    def resume_after_approval(
+        self,
+        user_id: str,
+        conversation_id: str,
+        tool_call_ids: list[str],
+        approved: bool,
+    ) -> Iterator[str]:
+        """Resume the agent loop after the user approves or rejects tool calls.
+
+        Looks up the pending tool calls from the last assistant message,
+        executes (or rejects) them, then continues the agent loop so the
+        LLM can produce a final response.
+        """
+        g.conversation_id = conversation_id
+
+        # Find the most recent assistant message with unresolved tool calls
+        history = self._get_history(conversation_id)
+        pending_tc: list[dict] = []
+        for msg in reversed(history):
+            if msg["role"] == "assistant" and msg.get("tool_calls"):
+                resolved_ids = {
+                    m["tool_call_id"]
+                    for m in history
+                    if m["role"] == "tool" and m.get("tool_call_id")
+                }
+                for tc in msg["tool_calls"]:
+                    if tc["id"] in tool_call_ids and tc["id"] not in resolved_ids:
+                        pending_tc.append(tc)
+                break
+
+        if not pending_tc:
+            yield f"event: error\ndata: {json.dumps({'error': 'No pending tool calls found'})}\n\n"
+            return
+
+        for tc in pending_tc:
+            tool_name = tc["function"]["name"]
+            tool_args = tc["function"]["arguments"]
+            tool_call_id = tc["id"]
+
+            if approved:
+                result_str = self.dispatch_tool_call(
+                    tool_name, tool_args, user_id, conversation_id,
+                )
+            else:
+                result_str = json.dumps({
+                    "tool_used": tool_name,
+                    "status": "rejected",
+                    "message": "User declined to execute this action.",
+                })
+
+            self._save_message(
+                conversation_id,
+                "tool",
+                content=result_str,
+                tool_call_id=tool_call_id,
+            )
+
+            yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': tool_call_id, 'name': tool_name, 'result': result_str})}\n\n"
+
+        # Reload context and continue the agent loop
+        memory_context = self._load_session_context(user_id)
+        bootstrap_context = ""
+        try:
+            bootstrap_context = load_bootstrap_files(user_id)
+        except Exception:
+            log.exception("load_bootstrap_files failed during resume user=%s", user_id)
+        skills_context = None
+        try:
+            skills_context = load_skills_for_prompt(user_id)
+        except Exception:
+            pass
+
+        yield from self._run_agent_loop(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message="",
+            memory_context=memory_context,
+            retrieved_context="",
+            workflow_context="",
+            skills_context=skills_context,
+            bootstrap_context=bootstrap_context,
+            rag_sources=[],
+        )
 
     # ── Session / persistence ──────────────────────────────────────
 
@@ -404,12 +545,17 @@ class Gateway:
 
     @staticmethod
     def _load_session_context(user_id: str) -> str:
-        """Create today's daily file (idempotent) and return recent daily context."""
+        """Create today's daily file (idempotent), ensure bootstrap
+        templates exist, and return recent daily context."""
         memory_context = ""
         try:
             ensure_daily_file(user_id)
         except Exception:
             log.exception("ensure_daily_file failed for user=%s", user_id)
+        try:
+            ensure_bootstrap_files(user_id)
+        except Exception:
+            log.exception("ensure_bootstrap_files failed for user=%s", user_id)
         try:
             memory_context = get_session_context(user_id)
         except Exception:

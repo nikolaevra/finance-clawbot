@@ -1,53 +1,17 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Brain, MessageSquare, FileText, Link2, LogOut, Receipt, Workflow, Sparkles } from "lucide-react";
+import { Brain, MessageSquare, FileText, Link2, LogOut, Workflow, Sparkles } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import ThemeToggle from "./ThemeToggle";
 
 const NAV_ITEMS = [
-  {
-    label: "Chat",
-    href: "/chat",
-    icon: MessageSquare,
-    activeColor: "text-blue-400",
-  },
-  {
-    label: "Memories",
-    href: "/chat/memories",
-    icon: Brain,
-    activeColor: "text-purple-400",
-  },
-  {
-    label: "Documents",
-    href: "/chat/documents",
-    icon: FileText,
-    activeColor: "text-emerald-400",
-  },
-  {
-    label: "Transactions",
-    href: "/chat/transactions",
-    icon: Receipt,
-    activeColor: "text-cyan-400",
-  },
-  {
-    label: "Workflows",
-    href: "/chat/workflows",
-    icon: Workflow,
-    activeColor: "text-amber-400",
-  },
-  {
-    label: "Skills",
-    href: "/chat/skills",
-    icon: Sparkles,
-    activeColor: "text-violet-400",
-  },
-  {
-    label: "Integrations",
-    href: "/chat/integrations",
-    icon: Link2,
-    activeColor: "text-orange-400",
-  },
+  { label: "Chat", href: "/chat", icon: MessageSquare },
+  { label: "Memories", href: "/chat/memories", icon: Brain },
+  { label: "Documents", href: "/chat/documents", icon: FileText },
+  { label: "Workflows", href: "/chat/workflows", icon: Workflow },
+  { label: "Skills", href: "/chat/skills", icon: Sparkles },
+  { label: "Integrations", href: "/chat/integrations", icon: Link2 },
 ] as const;
 
 export default function NavBar() {
@@ -68,7 +32,6 @@ export default function NavBar() {
         (pathname.startsWith("/chat/") &&
           !pathname.startsWith("/chat/memories") &&
           !pathname.startsWith("/chat/documents") &&
-          !pathname.startsWith("/chat/transactions") &&
           !pathname.startsWith("/chat/workflows") &&
           !pathname.startsWith("/chat/skills") &&
           !pathname.startsWith("/chat/integrations"))
@@ -79,9 +42,8 @@ export default function NavBar() {
 
   return (
     <>
-      {/* Desktop: vertical sidebar nav */}
-      <nav className="hidden md:flex w-[72px] shrink-0 flex-col items-center bg-zinc-50 dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 py-3">
-        {/* Top nav items */}
+      {/* Desktop: icon-only vertical nav */}
+      <nav className="hidden md:flex w-16 shrink-0 flex-col items-center glass bg-foreground/[0.03] dark:bg-foreground/[0.03] border-r border-foreground/[0.06] py-4">
         <div className="flex flex-1 flex-col items-center gap-1">
           {NAV_ITEMS.map((item) => {
             const active = isActive(item.href);
@@ -90,37 +52,36 @@ export default function NavBar() {
               <button
                 key={item.href}
                 onClick={() => router.push(item.href)}
-                className={`group relative flex flex-col items-center justify-center w-14 h-14 rounded-xl transition-colors ${
+                className={`group relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-200 ${
                   active
-                    ? "bg-zinc-200 dark:bg-zinc-800 " + item.activeColor
-                    : "text-zinc-500 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/50 hover:text-zinc-700 dark:hover:text-zinc-300"
+                    ? "bg-foreground/10 text-foreground"
+                    : "text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.06]"
                 }`}
                 title={item.label}
               >
-                <Icon size={20} />
-                <span className="mt-1 text-[10px] font-medium leading-none">
-                  {item.label}
-                </span>
+                {active && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-[3px] w-[3px] h-5 rounded-full bg-blue-400" />
+                )}
+                <Icon size={18} strokeWidth={active ? 2 : 1.5} />
               </button>
             );
           })}
         </div>
 
-        {/* Bottom actions */}
-        <div className="flex flex-col items-center gap-1 pt-2 border-t border-zinc-200 dark:border-zinc-800">
+        <div className="flex flex-col items-center gap-1 pt-3">
           <ThemeToggle />
           <button
             onClick={handleLogout}
-            className="flex items-center justify-center w-10 h-10 rounded-lg text-zinc-500 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-300"
+            className="flex items-center justify-center w-10 h-10 rounded-xl text-foreground/30 hover:text-foreground/60 hover:bg-foreground/[0.06]"
             title="Log out"
           >
-            <LogOut size={18} />
+            <LogOut size={16} strokeWidth={1.5} />
           </button>
         </div>
       </nav>
 
-      {/* Mobile: bottom tab bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around bg-zinc-50 dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 px-2 py-1 safe-area-pb">
+      {/* Mobile: frosted bottom tab bar */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around glass bg-black/60 dark:bg-black/70 border-t border-foreground/[0.08] px-2 py-2 safe-area-pb">
         {NAV_ITEMS.map((item) => {
           const active = isActive(item.href);
           const Icon = item.icon;
@@ -128,25 +89,21 @@ export default function NavBar() {
             <button
               key={item.href}
               onClick={() => router.push(item.href)}
-              className={`flex flex-col items-center justify-center py-2 px-3 rounded-lg transition-colors ${
+              className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-200 ${
                 active
-                  ? item.activeColor
-                  : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  ? "text-blue-400 bg-blue-400/10"
+                  : "text-foreground/40 hover:text-foreground/60"
               }`}
             >
-              <Icon size={20} />
-              <span className="mt-0.5 text-[10px] font-medium">
-                {item.label}
-              </span>
+              <Icon size={20} strokeWidth={active ? 2 : 1.5} />
             </button>
           );
         })}
         <button
           onClick={handleLogout}
-          className="flex flex-col items-center justify-center py-2 px-3 rounded-lg text-zinc-500 transition-colors hover:text-zinc-700 dark:hover:text-zinc-300"
+          className="flex items-center justify-center w-10 h-10 rounded-xl text-foreground/40 hover:text-foreground/60"
         >
-          <LogOut size={20} />
-          <span className="mt-0.5 text-[10px] font-medium">Logout</span>
+          <LogOut size={20} strokeWidth={1.5} />
         </button>
       </nav>
     </>

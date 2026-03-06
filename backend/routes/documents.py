@@ -8,6 +8,7 @@ and indexed into memory_chunks for RAG search.
 from __future__ import annotations
 
 import logging
+import time
 from flask import Blueprint, request, jsonify, g
 from middleware.auth import require_auth
 
@@ -60,6 +61,14 @@ def upload_document():
 
     user_id = g.user_id
     sb = get_supabase()
+    started = time.monotonic()
+    log.info(
+        "document_upload_start user=%s filename=%s size=%d ext=%s",
+        user_id,
+        file.filename,
+        len(file_bytes),
+        ext,
+    )
 
     # Store in Supabase Storage
     content_type = file.content_type or "application/octet-stream"
@@ -88,6 +97,15 @@ def upload_document():
         log.exception("process_document failed for doc=%s user=%s", doc["id"], user_id)
         refreshed = sb.table("documents").select("*").eq("id", doc["id"]).execute()
         doc = refreshed.data[0] if refreshed.data else doc
+
+    elapsed = (time.monotonic() - started) * 1000
+    log.info(
+        "document_upload_done user=%s doc=%s status=%s duration_ms=%.0f",
+        user_id,
+        doc.get("id"),
+        doc.get("status"),
+        elapsed,
+    )
 
     return jsonify(doc), 201
 

@@ -1,0 +1,13 @@
+[variables]
+PYTHONPATH = "/app/backend"
+
+[phases.setup]
+nixPkgs = ["python311", "gcc"]
+
+[phases.install]
+cmds = [
+  "cd backend && pip install --no-cache-dir -r requirements.txt"
+]
+
+[start]
+cmd = "cd backend && gunicorn run:app --bind 0.0.0.0:${PORT:-5001} --workers ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-120}"

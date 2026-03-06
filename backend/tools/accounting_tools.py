@@ -2,53 +2,56 @@
 Accounting tools for OpenAI function calling.
 
 These tools give the AI assistant the ability to query accounting
-data (accounts with balances, transactions) that has been imported
-from a connected accounting system via Merge.dev.
+data (accounts with balances, transactions) from a connected
+accounting system via the live Merge.dev API.
 """
 from __future__ import annotations
 
-import json
+import logging
+from datetime import datetime
+
 from flask import g
 
 from tools.registry import tool_registry
 from services.supabase_service import get_supabase
+from services.merge_service import fetch_accounts, fetch_transactions, create_bill
+
+log = logging.getLogger(__name__)
 
 
-def _get_integration_meta() -> dict | None:
-    """Return the user's active integration metadata (provider, last sync)."""
+def _get_accounting_token() -> tuple[str | None, dict | None]:
+    """Return (account_token, meta) for the user's active accounting integration."""
+    user_id = getattr(g, "user_id", None)
     try:
         sb = get_supabase()
         result = (
             sb.table("integrations")
-            .select("id, provider, integration_name, last_sync_at")
-            .eq("user_id", g.user_id)
+            .select("id, provider, integration_name, account_token")
+            .eq("user_id", user_id)
+            .in_("provider", ["quickbooks", "netsuite"])
             .eq("status", "active")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
         if result.data:
-            return result.data[0]
+            row = result.data[0]
+            return row["account_token"], {
+                "id": row["id"],
+                "provider": row["provider"],
+                "integration_name": row["integration_name"],
+            }
     except Exception:
-        pass
-    return None
+        log.exception("accounting token lookup failed user=%s", user_id)
+    return None, None
 
 
-def _log_accounting_access(tool_name: str) -> None:
-    """Best-effort insert into memory_access_log for accounting tool usage."""
-    try:
-        conversation_id = getattr(g, "conversation_id", None)
-        if not conversation_id:
-            return
-        sb = get_supabase()
-        sb.table("memory_access_log").insert({
-            "user_id": g.user_id,
-            "conversation_id": conversation_id,
-            "tool_name": tool_name,
-            "source_file": "accounting/integration",
-        }).execute()
-    except Exception:
-        pass
+_NO_INTEGRATION = {
+    "error": (
+        "No active accounting integration found. The user needs to connect "
+        "their accounting system first via the Integrations page."
+    ),
+}
 
 
 # ── accounting_list_accounts ──────────────────────────────────
@@ -78,33 +81,30 @@ def _log_accounting_access(tool_name: str) -> None:
     },
 )
 def accounting_list_accounts(classification: str | None = None) -> dict:
-    user_id = g.user_id
-    _log_accounting_access("accounting_list_accounts")
+    token, meta = _get_accounting_token()
+    if not token or not meta:
+        return {**_NO_INTEGRATION, "tool_used": "accounting_list_accounts"}
 
-    meta = _get_integration_meta()
-    if not meta:
-        return {
-            "error": "No active accounting integration found. The user needs to connect their accounting system first via the Integrations page.",
-            "tool_used": "accounting_list_accounts",
-        }
+    try:
+        raw_accounts = fetch_accounts(token)
+    except Exception as e:
+        log.exception("accounting_list_accounts fetch failed")
+        return {"error": str(e), "tool_used": "accounting_list_accounts"}
 
-    sb = get_supabase()
-    query = (
-        sb.table("accounting_accounts")
-        .select("name, description, classification, type, status, current_balance, currency")
-        .eq("user_id", user_id)
-        .eq("integration_id", meta["id"])
-    )
+    accounts = []
+    for a in raw_accounts:
+        cls = (a.get("classification") or "").lower() or None
+        if classification and cls != classification.lower():
+            continue
+        accounts.append({
+            "name": a.get("name", ""),
+            "classification": cls,
+            "type": (a.get("type") or "").lower() or None,
+            "current_balance": a.get("current_balance"),
+            "currency": a.get("currency") or "USD",
+            "status": (a.get("status") or "active").lower(),
+        })
 
-    if classification:
-        query = query.eq("classification", classification.lower())
-
-    query = query.order("classification").order("name")
-    result = query.execute()
-
-    accounts = result.data or []
-
-    # Compute summary totals by classification
     totals: dict[str, float] = {}
     for a in accounts:
         cls = a.get("classification") or "other"
@@ -113,21 +113,10 @@ def accounting_list_accounts(classification: str | None = None) -> dict:
 
     return {
         "tool_used": "accounting_list_accounts",
-        "source": f"{meta['integration_name']} via Merge.dev",
-        "last_synced": meta.get("last_sync_at"),
+        "source": f"{meta['integration_name']} via Merge.dev (live)",
         "filter_applied": classification or "none",
         "total_accounts": len(accounts),
-        "accounts": [
-            {
-                "name": a["name"],
-                "classification": a.get("classification"),
-                "type": a.get("type"),
-                "current_balance": a.get("current_balance"),
-                "currency": a.get("currency", "USD"),
-                "status": a.get("status"),
-            }
-            for a in accounts
-        ],
+        "accounts": accounts,
         "summary_by_classification": totals,
     }
 
@@ -188,57 +177,76 @@ def accounting_search_transactions(
     search: str | None = None,
     limit: int = 50,
 ) -> dict:
-    user_id = g.user_id
-    _log_accounting_access("accounting_search_transactions")
-
-    meta = _get_integration_meta()
-    if not meta:
-        return {
-            "error": "No active accounting integration found. The user needs to connect their accounting system first via the Integrations page.",
-            "tool_used": "accounting_search_transactions",
-        }
+    token, meta = _get_accounting_token()
+    if not token or not meta:
+        return {**_NO_INTEGRATION, "tool_used": "accounting_search_transactions"}
 
     limit = min(max(limit, 1), 200)
 
-    sb = get_supabase()
-    query = (
-        sb.table("accounting_transactions")
-        .select("transaction_date, number, memo, total_amount, currency, contact_name, account_name, transaction_type, line_items")
-        .eq("user_id", user_id)
-        .eq("integration_id", meta["id"])
-    )
+    try:
+        raw_txns = fetch_transactions(token, modified_after=start_date)
+    except Exception as e:
+        log.exception("accounting_search_transactions fetch failed")
+        return {"error": str(e), "tool_used": "accounting_search_transactions"}
 
-    # Apply filters
-    if start_date:
-        query = query.gte("transaction_date", start_date)
-    if end_date:
-        query = query.lte("transaction_date", end_date)
-    if min_amount is not None:
-        query = query.gte("total_amount", min_amount)
-    if max_amount is not None:
-        query = query.lte("total_amount", max_amount)
-    if account_name:
-        query = query.ilike("account_name", f"%{account_name}%")
-    if search:
-        # Search across memo, contact_name, and number
-        query = query.or_(
-            f"memo.ilike.%{search}%,"
-            f"contact_name.ilike.%{search}%,"
-            f"number.ilike.%{search}%"
-        )
+    filtered = []
+    for txn in raw_txns:
+        txn_date = txn.get("transaction_date")
+        if start_date and txn_date and txn_date < start_date:
+            continue
+        if end_date and txn_date and txn_date > end_date:
+            continue
 
-    query = query.order("transaction_date", desc=True).limit(limit)
-    result = query.execute()
+        amount = txn.get("total_amount")
+        if amount is not None:
+            try:
+                amount_f = float(amount)
+            except (ValueError, TypeError):
+                amount_f = 0
+            if min_amount is not None and amount_f < min_amount:
+                continue
+            if max_amount is not None and amount_f > max_amount:
+                continue
 
-    transactions = result.data or []
+        acct = txn.get("account") or ""
+        if account_name and account_name.lower() not in str(acct).lower():
+            continue
 
-    # Compute summary
-    total_sum = sum(float(t.get("total_amount") or 0) for t in transactions)
+        if search:
+            haystack = " ".join(str(v) for v in [
+                txn.get("memo"), txn.get("description"),
+                txn.get("contact"), txn.get("number"),
+            ] if v).lower()
+            if search.lower() not in haystack:
+                continue
+
+        contact_name = None
+        contact_ref = txn.get("contact")
+        if isinstance(contact_ref, dict):
+            contact_name = contact_ref.get("name")
+        elif isinstance(contact_ref, str) and contact_ref:
+            contact_name = contact_ref
+
+        filtered.append({
+            "date": txn_date,
+            "number": txn.get("number"),
+            "memo": txn.get("memo") or txn.get("description"),
+            "amount": amount,
+            "currency": txn.get("currency") or "USD",
+            "contact": contact_name,
+            "account": str(acct) if acct else None,
+            "type": (txn.get("transaction_type") or "").lower() or None,
+            "line_items": txn.get("line_items"),
+        })
+
+    filtered.sort(key=lambda t: t.get("date") or "", reverse=True)
+    truncated = filtered[:limit]
+
+    total_sum = sum(float(t.get("amount") or 0) for t in truncated)
 
     return {
         "tool_used": "accounting_search_transactions",
-        "source": f"{meta['integration_name']} via Merge.dev",
-        "last_synced": meta.get("last_sync_at"),
+        "source": f"{meta['integration_name']} via Merge.dev (live)",
         "filters_applied": {
             "start_date": start_date,
             "end_date": end_date,
@@ -247,20 +255,126 @@ def accounting_search_transactions(
             "account_name": account_name,
             "search": search,
         },
-        "total_results": len(transactions),
+        "total_results": len(truncated),
         "total_amount_sum": round(total_sum, 2),
-        "transactions": [
-            {
-                "date": t.get("transaction_date"),
-                "number": t.get("number"),
-                "memo": t.get("memo"),
-                "amount": t.get("total_amount"),
-                "currency": t.get("currency", "USD"),
-                "contact": t.get("contact_name"),
-                "account": t.get("account_name"),
-                "type": t.get("transaction_type"),
-                "line_items": t.get("line_items"),
-            }
-            for t in transactions
-        ],
+        "transactions": truncated,
     }
+
+
+# ── accounting_create_bill ────────────────────────────────────
+
+
+@tool_registry.register(
+    name="accounting_create_bill",
+    label="Create Bill",
+    category="accounting",
+    requires_approval=True,
+    description=(
+        "Create a bill (accounts-payable) in the user's connected accounting "
+        "system (QuickBooks Online or NetSuite). Requires a vendor, at least "
+        "one line item with a description and amount, and optionally issue/due "
+        "dates. Use accounting_list_accounts to look up account IDs for line "
+        "items if the user wants to specify GL accounts."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "vendor_id": {
+                "type": "string",
+                "description": (
+                    "The Merge remote ID of the vendor / supplier. "
+                    "Use accounting_search_transactions to find vendor references."
+                ),
+            },
+            "line_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "Line item description.",
+                        },
+                        "total_amount": {
+                            "type": "number",
+                            "description": "Total amount for this line item.",
+                        },
+                        "account": {
+                            "type": "string",
+                            "description": (
+                                "Optional Merge remote ID of the GL account "
+                                "to post against."
+                            ),
+                        },
+                        "quantity": {
+                            "type": "number",
+                            "description": "Quantity (default 1).",
+                        },
+                        "unit_price": {
+                            "type": "number",
+                            "description": "Price per unit.",
+                        },
+                    },
+                    "required": ["description", "total_amount"],
+                },
+                "description": "One or more line items for the bill.",
+            },
+            "issue_date": {
+                "type": "string",
+                "description": "Bill issue date (YYYY-MM-DD). Defaults to today.",
+            },
+            "due_date": {
+                "type": "string",
+                "description": "Payment due date (YYYY-MM-DD). Optional.",
+            },
+            "currency": {
+                "type": "string",
+                "description": "Three-letter currency code (default USD).",
+            },
+            "memo": {
+                "type": "string",
+                "description": "Optional memo / notes for the bill.",
+            },
+        },
+        "required": ["vendor_id", "line_items"],
+    },
+)
+def accounting_create_bill(
+    vendor_id: str,
+    line_items: list[dict],
+    issue_date: str | None = None,
+    due_date: str | None = None,
+    currency: str = "USD",
+    memo: str | None = None,
+) -> dict:
+    token, meta = _get_accounting_token()
+    if not token or not meta:
+        return {**_NO_INTEGRATION, "tool_used": "accounting_create_bill"}
+
+    try:
+        result = create_bill(
+            token,
+            vendor_id=vendor_id,
+            line_items=line_items,
+            issue_date=issue_date,
+            due_date=due_date,
+            currency=currency,
+            memo=memo,
+        )
+        model = result.get("model", {})
+        return {
+            "tool_used": "accounting_create_bill",
+            "source": f"{meta['integration_name']} via Merge.dev",
+            "status": "created",
+            "bill_id": model.get("id"),
+            "remote_id": model.get("remote_id"),
+            "vendor": model.get("vendor"),
+            "total_amount": model.get("total_amount"),
+            "issue_date": model.get("issue_date"),
+            "due_date": model.get("due_date"),
+            "currency": model.get("currency"),
+            "line_items_count": len(model.get("line_items", [])),
+        }
+    except Exception as e:
+        log.exception("accounting_create_bill failed")
+        return {"error": str(e), "tool_used": "accounting_create_bill"}

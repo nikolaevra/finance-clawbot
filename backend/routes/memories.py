@@ -152,6 +152,70 @@ def update_long_term():
     return jsonify({'source_file': 'MEMORY.md', 'content': content})
 
 
+# ── Bootstrap files (SOUL, IDENTITY, USER, AGENTS, TOOLS, BOOTSTRAP) ─
+
+_ALLOWED_BOOTSTRAP = {
+    "SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md", "BOOTSTRAP.md",
+}
+
+
+@memories_bp.route('/memories/bootstrap', methods=['GET'])
+@require_auth
+def list_bootstrap():
+    """Return all bootstrap files and whether they exist."""
+    user_id = g.user_id
+    files = []
+    for filename in sorted(_ALLOWED_BOOTSTRAP):
+        content = memory_service.get_bootstrap_file(user_id, filename)
+        files.append({
+            'filename': filename,
+            'exists': content is not None,
+            'size': len(content) if content else 0,
+        })
+    return jsonify({'files': files})
+
+
+@memories_bp.route('/memories/bootstrap/<filename>', methods=['GET'])
+@require_auth
+def get_bootstrap(filename: str):
+    """Return the content of a bootstrap file."""
+    if filename not in _ALLOWED_BOOTSTRAP:
+        return jsonify({'error': f'Invalid bootstrap file: {filename}'}), 400
+    user_id = g.user_id
+    content = memory_service.get_bootstrap_file(user_id, filename)
+    if content is None:
+        return jsonify({'error': f'{filename} not found.'}), 404
+    return jsonify({'filename': filename, 'content': content})
+
+
+@memories_bp.route('/memories/bootstrap/<filename>', methods=['PUT'])
+@require_auth
+def update_bootstrap(filename: str):
+    """Create or replace a bootstrap file."""
+    if filename not in _ALLOWED_BOOTSTRAP:
+        return jsonify({'error': f'Invalid bootstrap file: {filename}'}), 400
+    user_id = g.user_id
+    body = request.get_json(silent=True) or {}
+    content = body.get('content')
+    if content is None:
+        return jsonify({'error': 'content is required'}), 400
+    memory_service.save_bootstrap_file(user_id, filename, content)
+    return jsonify({'filename': filename, 'content': content})
+
+
+@memories_bp.route('/memories/bootstrap/<filename>', methods=['DELETE'])
+@require_auth
+def delete_bootstrap(filename: str):
+    """Delete a bootstrap file (used after onboarding completes)."""
+    if filename not in _ALLOWED_BOOTSTRAP:
+        return jsonify({'error': f'Invalid bootstrap file: {filename}'}), 400
+    user_id = g.user_id
+    removed = memory_service.delete_bootstrap_file(user_id, filename)
+    if not removed:
+        return jsonify({'error': f'{filename} not found or could not be deleted.'}), 404
+    return jsonify({'filename': filename, 'deleted': True})
+
+
 # ── Access log ───────────────────────────────────────────────────────
 
 @memories_bp.route('/memories/access-log/<path:source_file>', methods=['GET'])

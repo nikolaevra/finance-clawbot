@@ -1,33 +1,58 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import NavBar from "@/components/NavBar";
 import ActivityProvider from "@/components/ActivityProvider";
 import { useActivityInternal } from "@/components/ActivityProvider";
 import ActivityPanel, {
   ActivityToggleButton,
 } from "@/components/ActivityPanel";
+import ConversationProvider from "@/components/ConversationProvider";
+import ChatSidebar, {
+  ChatSidebarToggle,
+  MobileChatSidebar,
+  MobileChatSidebarToggle,
+} from "@/components/ChatSidebar";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
 
+const NON_CHAT_PREFIXES = [
+  "/chat/memories",
+  "/chat/documents",
+  "/chat/workflows",
+  "/chat/skills",
+  "/chat/integrations",
+];
+
+function isChatRoute(pathname: string) {
+  return !NON_CHAT_PREFIXES.some((p) => pathname.startsWith(p));
+}
+
 function ChatLayoutInner({ children }: { children: React.ReactNode }) {
   const { panelRef, isPanelOpen, onPanelResize } = useActivityInternal();
+  const pathname = usePathname();
+  const showChatSidebar = isChatRoute(pathname);
 
   return (
-    <div className="flex h-screen bg-white dark:bg-zinc-950">
+    <div className="flex h-screen bg-background">
       <NavBar />
+      {showChatSidebar && <ChatSidebar />}
+      {showChatSidebar && <MobileChatSidebar />}
+      {showChatSidebar && <MobileChatSidebarToggle />}
       <ResizablePanelGroup orientation="horizontal" className="flex-1">
         <ResizablePanel defaultSize="100%" minSize="50%">
           <main className="flex h-full flex-col overflow-hidden pb-16 md:pb-0">
+            {showChatSidebar && <ChatSidebarToggle />}
             {children}
           </main>
         </ResizablePanel>
 
         <ResizableHandle
           withHandle={isPanelOpen}
-          className={isPanelOpen ? "" : "w-0 opacity-0"}
+          className={isPanelOpen ? "opacity-30 hover:opacity-60 transition-opacity" : "w-0 opacity-0"}
         />
 
         <ResizablePanel
@@ -54,8 +79,10 @@ export default function ChatLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ActivityProvider>
-      <ChatLayoutInner>{children}</ChatLayoutInner>
-    </ActivityProvider>
+    <ConversationProvider>
+      <ActivityProvider>
+        <ChatLayoutInner>{children}</ChatLayoutInner>
+      </ActivityProvider>
+    </ConversationProvider>
   );
 }

@@ -8,9 +8,7 @@ Endpoints:
   POST   /integrations/float          – connect Float via API key
   POST   /integrations/gmail/auth-url – get Google OAuth URL
   GET    /integrations/gmail/callback – handle Google OAuth redirect
-  POST   /integrations/<id>/sync      – trigger full data sync
   DELETE /integrations/<id>           – disconnect integration
-  GET    /transactions                – list user's synced accounting transactions
 """
 from __future__ import annotations
 
@@ -38,67 +36,13 @@ def list_integrations():
     sb = get_supabase()
     result = (
         sb.table("integrations")
-        .select("id, provider, integration_name, status, last_sync_at, last_sync_status, created_at, updated_at")
+        .select("id, provider, integration_name, status, created_at, updated_at")
         .eq("user_id", g.user_id)
         .neq("status", "disconnected")
         .order("created_at", desc=True)
         .execute()
     )
     return jsonify(result.data)
-
-
-# ── List transactions ──────────────────────────────────────────
-
-@integrations_bp.route("/transactions", methods=["GET"])
-@require_auth
-def list_transactions():
-    sb = get_supabase()
-
-    # Build a lookup of integration_id → provider for the user
-    int_result = (
-        sb.table("integrations")
-        .select("id, provider, integration_name")
-        .eq("user_id", g.user_id)
-        .neq("status", "disconnected")
-        .execute()
-    )
-    integration_map = {
-        row["id"]: {
-            "provider": row["provider"],
-            "integration_name": row["integration_name"],
-        }
-        for row in (int_result.data or [])
-    }
-
-    if not integration_map:
-        return jsonify([])
-
-    # Fetch transactions for this user, newest first
-    result = (
-        sb.table("accounting_transactions")
-        .select(
-            "id, integration_id, remote_id, transaction_date, number, memo, "
-            "total_amount, currency, contact_name, account_name, "
-            "transaction_type, remote_created_at, remote_updated_at, created_at"
-        )
-        .eq("user_id", g.user_id)
-        .order("transaction_date", desc=True)
-        .limit(500)
-        .execute()
-    )
-
-    # Enrich each transaction with provider info
-    transactions = []
-    for txn in (result.data or []):
-        int_id = txn.get("integration_id")
-        meta = integration_map.get(int_id, {})
-        txn["provider"] = meta.get("provider")
-        txn["integration_name"] = meta.get("integration_name")
-        # Remove integration_id from response (not needed by frontend)
-        txn.pop("integration_id", None)
-        transactions.append(txn)
-
-    return jsonify(transactions)
 
 
 # ── Create Link token ────────────────────────────────────────
@@ -136,8 +80,8 @@ def create_integration():
 
     provider = body.get("provider", "quickbooks")
     integration_name = body.get("integration_name", "QuickBooks Online")
+    log.info("create_integration_start user=%s provider=%s", g.user_id, provider)
 
-    # Exchange for account token
     try:
         token_data = exchange_public_token(public_token)
     except Exception as e:
@@ -148,9 +92,9 @@ def create_integration():
     merge_account_id = token_data.get("integration", {}).get("id", "") if isinstance(token_data.get("integration"), dict) else ""
 
     if not account_token:
+        log.error("create_integration_missing_account_token user=%s provider=%s", g.user_id, provider)
         return jsonify({"error": "No account_token returned from Merge"}), 502
 
-    # Persist
     sb = get_supabase()
     result = (
         sb.table("integrations")
@@ -166,8 +110,8 @@ def create_integration():
     )
 
     row = result.data[0] if result.data else {}
-    # Don't leak account_token to frontend
     row.pop("account_token", None)
+    log.info("create_integration_success user=%s provider=%s integration_id=%s", g.user_id, provider, row.get("id"))
     return jsonify(row), 201
 
 
@@ -181,7 +125,9 @@ def connect_float():
     if not api_token:
         return jsonify({"error": "api_token is required"}), 400
 
+    log.info("connect_float_start user=%s", g.user_id)
     if not float_validate_token(api_token):
+        log.warning("connect_float_invalid_token user=%s", g.user_id)
         return jsonify({"error": "Invalid Float API token"}), 401
 
     sb = get_supabase()
@@ -199,6 +145,7 @@ def connect_float():
 
     row = result.data[0] if result.data else {}
     row.pop("account_token", None)
+    log.info("connect_float_success user=%s integration_id=%s", g.user_id, row.get("id"))
     return jsonify(row), 201
 
 
@@ -229,6 +176,7 @@ def gmail_callback():
         return jsonify({"error": "Missing code or state"}), 400
 
     user_id = state
+    log.info("gmail_callback_start user=%s", user_id)
 
     try:
         credentials_json = exchange_code(code)
@@ -248,39 +196,10 @@ def gmail_callback():
         })
         .execute()
     )
+    log.info("gmail_callback_success user=%s integration_id=%s", user_id, (result.data[0] if result.data else {}).get("id"))
 
     frontend_url = Config.FRONTEND_URL
     return redirect(f"{frontend_url}/chat/integrations?gmail=connected")
-
-
-# ── Sync integration data ────────────────────────────────────
-
-@integrations_bp.route("/integrations/<integration_id>/sync", methods=["POST"])
-@require_auth
-def sync_integration(integration_id: str):
-    sb = get_supabase()
-
-    # Verify ownership
-    int_result = (
-        sb.table("integrations")
-        .select("id")
-        .eq("id", integration_id)
-        .eq("user_id", g.user_id)
-        .single()
-        .execute()
-    )
-    if not int_result.data:
-        return jsonify({"error": "Integration not found"}), 404
-
-    # Dispatch to Celery for async processing
-    from tasks.sync_tasks import sync_integration as sync_task
-    task = sync_task.delay(integration_id, g.user_id)
-
-    return jsonify({
-        "status": "syncing",
-        "task_id": task.id,
-        "message": "Sync started in the background. Check back shortly.",
-    })
 
 
 # ── Disconnect integration ────────────────────────────────────
@@ -299,24 +218,20 @@ def disconnect_integration(integration_id: str):
         .execute()
     )
     if not int_result.data:
+        log.warning("disconnect_integration_not_found user=%s integration_id=%s", g.user_id, integration_id)
         return jsonify({"error": "Integration not found"}), 404
 
     provider = int_result.data.get("provider", "")
     account_token = int_result.data.get("account_token", "")
 
-    # Provider-specific cleanup
     if provider in ("quickbooks", "netsuite"):
+        log.info("disconnect_integration_remote_delete user=%s provider=%s integration_id=%s", g.user_id, provider, integration_id)
         delete_account(account_token)
-        sb.table("accounting_transactions").delete().eq("integration_id", integration_id).execute()
-        sb.table("accounting_accounts").delete().eq("integration_id", integration_id).execute()
-    elif provider == "float":
-        sb.table("float_transactions").delete().eq("integration_id", integration_id).execute()
-    elif provider == "gmail":
-        sb.table("emails").delete().eq("integration_id", integration_id).execute()
 
     sb.table("integrations").update({
         "status": "disconnected",
         "account_token": "",
     }).eq("id", integration_id).execute()
+    log.info("disconnect_integration_success user=%s provider=%s integration_id=%s", g.user_id, provider, integration_id)
 
     return jsonify({"status": "disconnected"})

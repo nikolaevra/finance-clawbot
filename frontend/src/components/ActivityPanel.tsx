@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ActivityEvent, ApprovalPreviewItem } from "@/types";
 import { approveWorkflowRun, cancelWorkflowRun } from "@/lib/api";
+import { logger } from "@/lib/logger";
 
 function formatTime(iso: string): string {
   try {
@@ -44,29 +45,29 @@ const EVENT_CONFIG: Record<
   tool_dispatch: { icon: ArrowRightLeft, color: "text-blue-400", pulse: true },
   tool_complete: { icon: CheckCircle2, color: "text-emerald-400" },
   tool_error: { icon: XCircle, color: "text-red-400" },
-  workflow_start: { icon: Play, color: "text-violet-400", pulse: true },
-  step_start: { icon: Loader2, color: "text-sky-400", pulse: true },
+  workflow_start: { icon: Play, color: "text-blue-400", pulse: true },
+  step_start: { icon: Loader2, color: "text-blue-400", pulse: true },
   step_complete: { icon: CheckCircle2, color: "text-emerald-400" },
   step_failed: { icon: XCircle, color: "text-red-400" },
-  step_skipped: { icon: SkipForward, color: "text-zinc-400" },
+  step_skipped: { icon: SkipForward, color: "text-foreground/30" },
   approval_gate: { icon: Pause, color: "text-amber-400" },
   workflow_complete: { icon: Zap, color: "text-emerald-400" },
   workflow_failed: { icon: AlertTriangle, color: "text-red-400" },
-  workflow_done: { icon: CheckCircle2, color: "text-emerald-500" },
+  workflow_done: { icon: CheckCircle2, color: "text-emerald-400" },
 };
 
 function ActorBadge({ actor }: { actor: "gateway" | "lobster" }) {
   if (actor === "gateway") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-400 leading-none">
-        <Server size={9} />
+      <span className="inline-flex items-center gap-1 rounded-full bg-blue-400/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-400/80 leading-none">
+        <Server size={8} />
         Gateway
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-400 leading-none">
-      <Wrench size={9} />
+    <span className="inline-flex items-center gap-1 rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-foreground/60 leading-none">
+      <Wrench size={8} />
       Lobster
     </span>
   );
@@ -76,14 +77,14 @@ function PreviewBlock({ items }: { items: ApprovalPreviewItem[] }) {
   if (!items || items.length === 0) return null;
 
   return (
-    <div className="mt-1.5 space-y-1.5">
+    <div className="mt-2 space-y-1.5">
       {items.map((item, idx) => (
         <div
           key={idx}
-          className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-800/40 p-2"
+          className="rounded-xl bg-amber-400/[0.06] ring-1 ring-amber-400/10 p-2.5"
         >
           {item.summary && (
-            <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300 mb-1">
+            <p className="text-[11px] font-medium text-amber-400/80 mb-1">
               {item.summary}
             </p>
           )}
@@ -92,17 +93,17 @@ function PreviewBlock({ items }: { items: ApprovalPreviewItem[] }) {
               {item.sample.map((s, si) => (
                 <div
                   key={si}
-                  className="flex items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400"
+                  className="flex items-center gap-1.5 text-[10px] text-foreground/60"
                 >
-                  <span className="shrink-0 text-amber-500">&bull;</span>
+                  <span className="shrink-0 text-amber-400/70">-</span>
                   <span className="truncate">
                     {String(s.suggested_category || s.category || "")}
-                    {s.reason ? ` — ${String(s.reason).slice(0, 60)}` : ""}
+                    {s.reason ? ` -- ${String(s.reason).slice(0, 60)}` : ""}
                   </span>
                 </div>
               ))}
               {(item.count || 0) > (item.sample?.length || 0) && (
-                <p className="text-[10px] text-zinc-400 italic">
+                <p className="text-[10px] text-foreground/40 italic">
                   +{(item.count || 0) - (item.sample?.length || 0)} more...
                 </p>
               )}
@@ -113,24 +114,24 @@ function PreviewBlock({ items }: { items: ApprovalPreviewItem[] }) {
               {item.sample.map((a, ai) => (
                 <div
                   key={ai}
-                  className="flex items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400"
+                  className="flex items-center gap-1.5 text-[10px] text-foreground/60"
                 >
-                  <span className="shrink-0 text-red-400">&bull;</span>
+                  <span className="shrink-0 text-red-400/70">-</span>
                   <span className="truncate">
-                    {String(a.memo || a.contact || "")} — $
+                    {String(a.memo || a.contact || "")} -- $
                     {String(a.amount || "")}
                   </span>
                 </div>
               ))}
               {(item.count || 0) > (item.sample?.length || 0) && (
-                <p className="text-[10px] text-zinc-400 italic">
+                <p className="text-[10px] text-foreground/40 italic">
                   +{(item.count || 0) - (item.sample?.length || 0)} more...
                 </p>
               )}
             </div>
           )}
           {item.type === "report" && item.preview && (
-            <p className="text-[10px] text-zinc-600 dark:text-zinc-400 line-clamp-4 whitespace-pre-wrap">
+            <p className="text-[10px] text-foreground/60 line-clamp-4 whitespace-pre-wrap">
               {item.preview}
             </p>
           )}
@@ -143,7 +144,7 @@ function PreviewBlock({ items }: { items: ApprovalPreviewItem[] }) {
 function EventRow({ event }: { event: ActivityEvent }) {
   const config = EVENT_CONFIG[event.type] || {
     icon: Activity,
-    color: "text-zinc-400",
+    color: "text-foreground/30",
   };
   const Icon = config.icon;
   const isError =
@@ -151,38 +152,34 @@ function EventRow({ event }: { event: ActivityEvent }) {
   const isDone = event.type === "workflow_done" || event.type === "workflow_complete";
 
   return (
-    <div className="group flex gap-2.5 py-2 px-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors">
+    <div className="group flex gap-2.5 py-2 px-3 hover:bg-foreground/[0.03] transition-colors">
       <div className="flex flex-col items-center pt-0.5">
-        <div
-          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
-            config.pulse ? "bg-current/10 ring-2 ring-current/20" : ""
-          } ${config.color}`}
-        >
-          <Icon size={12} className={config.pulse ? "animate-pulse" : ""} />
+        <div className={`flex h-5 w-5 shrink-0 items-center justify-center ${config.color}`}>
+          <Icon size={12} strokeWidth={1.5} className={config.pulse ? "animate-pulse" : ""} />
         </div>
-        <div className="mt-1 w-px flex-1 bg-zinc-200 dark:bg-zinc-700/60" />
+        <div className="mt-1 w-px flex-1 bg-foreground/[0.06]" />
       </div>
 
       <div className="flex-1 min-w-0 pb-1">
         <div className="flex items-center gap-1.5 mb-0.5">
           <ActorBadge actor={event.actor} />
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500 tabular-nums">
+          <span className="text-[10px] text-foreground/45 tabular-nums">
             {formatTime(event.timestamp)}
           </span>
         </div>
         <p
           className={`text-xs leading-relaxed ${
             isError
-              ? "text-red-500 dark:text-red-400"
+              ? "text-red-400/80"
               : isDone
-                ? "text-emerald-600 dark:text-emerald-400 font-medium"
-                : "text-zinc-700 dark:text-zinc-300"
+                ? "text-emerald-400/80 font-medium"
+                : "text-foreground/80"
           }`}
         >
           {event.message}
         </p>
         {event.detail && (
-          <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500 leading-relaxed">
+          <p className="mt-0.5 text-[11px] text-foreground/50 leading-relaxed">
             {event.detail}
           </p>
         )}
@@ -193,8 +190,6 @@ function EventRow({ event }: { event: ActivityEvent }) {
     </div>
   );
 }
-
-// --- Workflow run tracking from events ---
 
 interface TrackedRun {
   runId: string;
@@ -294,12 +289,12 @@ function useTrackedRuns(events: ActivityEvent[]): TrackedRun[] {
   }, [events]);
 }
 
-const STEP_DOT_COLORS: Record<string, string> = {
-  running: "bg-blue-500 animate-pulse",
-  completed: "bg-emerald-500",
-  failed: "bg-red-500",
-  skipped: "bg-zinc-400",
-  pending: "bg-zinc-300 dark:bg-zinc-600",
+const STEP_BAR_COLORS: Record<string, string> = {
+  running: "bg-blue-400 animate-pulse",
+  completed: "bg-emerald-400",
+  failed: "bg-red-400",
+  skipped: "bg-foreground/15",
+  pending: "bg-foreground/[0.08]",
 };
 
 function RunCard({ run }: { run: TrackedRun }) {
@@ -311,8 +306,12 @@ function RunCard({ run }: { run: TrackedRun }) {
       setActing(true);
       try {
         await approveWorkflowRun(run.runId, approve);
-      } catch {
-        /* swallow */
+      } catch (err) {
+        logger.error("workflow_approval_action_failed", {
+          runId: run.runId,
+          approve,
+          error: err instanceof Error ? err.message : String(err),
+        });
       } finally {
         setActing(false);
       }
@@ -324,8 +323,11 @@ function RunCard({ run }: { run: TrackedRun }) {
     setActing(true);
     try {
       await cancelWorkflowRun(run.runId);
-    } catch {
-      /* swallow */
+    } catch (err) {
+      logger.error("workflow_cancel_action_failed", {
+        runId: run.runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setActing(false);
     }
@@ -335,47 +337,47 @@ function RunCard({ run }: { run: TrackedRun }) {
 
   return (
     <div
-      className={`rounded-lg border overflow-hidden ${
+      className={`rounded-xl ring-1 overflow-hidden transition-all ${
         run.status === "paused"
-          ? "border-amber-300 dark:border-amber-700/60 bg-amber-50/50 dark:bg-amber-900/10"
+          ? "ring-amber-400/20 bg-amber-400/[0.04]"
           : isTerminal
-            ? "border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 opacity-70"
-            : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40"
+            ? "ring-foreground/[0.06] bg-foreground/[0.02] opacity-60"
+            : "ring-foreground/[0.08] bg-foreground/[0.03]"
       }`}
     >
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
       >
         {expanded ? (
-          <ChevronDown size={12} className="text-zinc-400 shrink-0" />
+          <ChevronDown size={11} className="text-foreground/50 shrink-0" />
         ) : (
-          <ChevronRight size={12} className="text-zinc-400 shrink-0" />
+          <ChevronRight size={11} className="text-foreground/50 shrink-0" />
         )}
         {run.status === "paused" ? (
-          <Pause size={12} className="text-amber-400 shrink-0" />
+          <Pause size={11} className="text-amber-400 shrink-0" />
         ) : run.status === "completed" ? (
-          <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+          <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />
         ) : run.status === "failed" ? (
-          <XCircle size={12} className="text-red-400 shrink-0" />
+          <XCircle size={11} className="text-red-400 shrink-0" />
         ) : (
           <Loader2
-            size={12}
+            size={11}
             className="animate-spin text-blue-400 shrink-0"
           />
         )}
-        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate flex-1">
+        <span className="text-xs font-medium text-foreground/80 truncate flex-1">
           {run.name}
         </span>
         <span
           className={`text-[10px] font-medium shrink-0 ${
             run.status === "paused"
-              ? "text-amber-500"
+              ? "text-amber-400/80"
               : run.status === "completed"
-                ? "text-emerald-500"
+                ? "text-emerald-400/80"
                 : run.status === "failed"
-                  ? "text-red-500"
-                  : "text-blue-400"
+                  ? "text-red-400/80"
+                  : "text-blue-400/80"
           }`}
         >
           {run.status === "paused"
@@ -389,23 +391,21 @@ function RunCard({ run }: { run: TrackedRun }) {
       </button>
 
       {expanded && (
-        <div className="border-t border-zinc-200/60 dark:border-zinc-700/40 px-3 py-2 space-y-2">
-          {/* Step dots */}
-          <div className="flex items-center gap-1">
+        <div className="border-t border-foreground/[0.06] px-3 py-2.5 space-y-2.5">
+          <div className="flex items-center gap-0.5">
             {run.steps.map((step) => (
               <div
                 key={step.id}
-                className={`h-2 flex-1 rounded-full ${STEP_DOT_COLORS[step.status] || STEP_DOT_COLORS.pending}`}
+                className={`h-1 flex-1 rounded-full ${STEP_BAR_COLORS[step.status] || STEP_BAR_COLORS.pending}`}
                 title={`${step.id}: ${step.status}`}
               />
             ))}
           </div>
 
-          {/* Approval prompt + preview + actions */}
           {run.status === "paused" && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {run.approvalPrompt && (
-                <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">
+                <p className="text-[11px] text-amber-400/70 leading-relaxed">
                   {run.approvalPrompt}
                 </p>
               )}
@@ -416,7 +416,7 @@ function RunCard({ run }: { run: TrackedRun }) {
                 <button
                   onClick={() => handleApprove(true)}
                   disabled={acting}
-                  className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-400 disabled:opacity-50 shadow-sm"
                 >
                   {acting ? (
                     <Loader2 size={10} className="animate-spin" />
@@ -428,7 +428,7 @@ function RunCard({ run }: { run: TrackedRun }) {
                 <button
                   onClick={() => handleApprove(false)}
                   disabled={acting}
-                  className="inline-flex items-center gap-1 rounded-md bg-zinc-200 dark:bg-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-50 transition-colors"
+                  className="inline-flex items-center gap-1 rounded-lg bg-foreground/[0.06] px-3 py-1.5 text-[11px] font-medium text-foreground/70 hover:text-foreground hover:bg-foreground/[0.1] disabled:opacity-50"
                 >
                   <X size={10} />
                   Reject
@@ -437,23 +437,21 @@ function RunCard({ run }: { run: TrackedRun }) {
             </div>
           )}
 
-          {/* Completion summary */}
           {isTerminal && run.completionMessage && (
             <p className={`text-[11px] leading-relaxed ${
               run.status === "completed"
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-red-500 dark:text-red-400"
+                ? "text-emerald-400/70"
+                : "text-red-400/70"
             }`}>
               {run.completionMessage}
             </p>
           )}
 
-          {/* Cancel for running */}
           {run.status === "running" && (
             <button
               onClick={handleCancel}
               disabled={acting}
-              className="inline-flex items-center gap-1 rounded-md bg-zinc-200 dark:bg-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-50 transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg bg-foreground/[0.06] px-3 py-1.5 text-[11px] font-medium text-foreground/60 hover:text-foreground/80 hover:bg-foreground/[0.1] disabled:opacity-50"
             >
               <X size={10} />
               Cancel
@@ -477,10 +475,10 @@ function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
   );
 
   return (
-    <div className="px-3 py-2 space-y-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+    <div className="px-3 py-3 space-y-2.5 border-b border-foreground/[0.06] shrink-0">
       {active.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+          <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
             Active runs
           </p>
           {active.map((run) => (
@@ -490,7 +488,7 @@ function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
       )}
       {terminal.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+          <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
             Recent
           </p>
           {terminal.map((run) => (
@@ -502,7 +500,6 @@ function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
   );
 }
 
-/** Floating toggle button shown on the right edge when the panel is collapsed. */
 export function ActivityToggleButton() {
   const { togglePanel, isPanelOpen, events } = useActivity();
 
@@ -516,18 +513,17 @@ export function ActivityToggleButton() {
   return (
     <button
       onClick={togglePanel}
-      className="fixed right-0 top-1/2 -translate-y-1/2 z-40 hidden md:flex items-center gap-1.5 rounded-l-lg bg-zinc-800 dark:bg-zinc-700 px-2 py-3 text-zinc-300 hover:bg-zinc-700 dark:hover:bg-zinc-600 transition-colors shadow-lg border border-r-0 border-zinc-700 dark:border-zinc-600"
+      className="fixed right-0 top-1/2 -translate-y-1/2 z-40 hidden md:flex items-center gap-1.5 rounded-l-xl bg-foreground/[0.06] px-2 py-3.5 text-foreground/50 hover:text-foreground/70 hover:bg-foreground/[0.1] transition-all shadow-lg shadow-black/20 ring-1 ring-foreground/[0.08] ring-r-0"
       title="System Activity"
     >
-      <Activity size={16} />
+      <Activity size={14} strokeWidth={1.5} />
       {hasRecentActivity && (
-        <span className="absolute -top-1 -left-1 h-2.5 w-2.5 rounded-full bg-blue-500 animate-pulse" />
+        <span className="absolute -top-1 -left-1 h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
       )}
     </button>
   );
 }
 
-/** The activity panel content rendered inside a ResizablePanel. */
 export default function ActivityPanel() {
   const { events, isConnected, togglePanel, clearEvents } = useActivity();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -546,49 +542,46 @@ export default function ActivityPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-white dark:bg-zinc-950 overflow-hidden">
-      {/* Header */}
-      <div className="border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 shrink-0">
+    <div className="flex h-full flex-col bg-foreground/[0.02] overflow-hidden">
+      <div className="px-4 py-4 shrink-0">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-            System Activity
+          <h2 className="text-sm font-medium text-foreground">
+            Activity
           </h2>
           <span
-            className={`h-2 w-2 rounded-full ${
-              isConnected ? "bg-emerald-500" : "bg-red-500"
+            className={`h-1.5 w-1.5 rounded-full ${
+              isConnected ? "bg-emerald-400" : "bg-red-400"
             }`}
             title={isConnected ? "Connected" : "Disconnected"}
           />
-          <span className="text-[10px] text-zinc-400">
+          <span className="text-[10px] text-foreground/50">
             {isConnected ? "Live" : "Reconnecting..."}
           </span>
           <div className="flex-1" />
           {events.length > 0 && (
             <button
               onClick={clearEvents}
-              className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+              className="flex items-center gap-1 text-[10px] text-foreground/40 hover:text-foreground/60"
             >
-              <Trash2 size={10} />
+              <Trash2 size={10} strokeWidth={1.5} />
               Clear
             </button>
           )}
           <button
             onClick={togglePanel}
-            className="flex items-center justify-center h-6 w-6 rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            className="flex items-center justify-center h-6 w-6 rounded-lg text-foreground/40 hover:text-foreground/60 hover:bg-foreground/[0.06]"
             title="Close panel"
           >
-            <PanelRightClose size={14} />
+            <PanelRightClose size={13} strokeWidth={1.5} />
           </button>
         </div>
-        <p className="text-[11px] text-zinc-500 mt-0.5">
-          Gateway &amp; Lobster orchestration events
+        <p className="text-[11px] text-foreground/45 mt-0.5">
+          Gateway & Lobster events
         </p>
       </div>
 
-      {/* Workflow runs with step progress + approval actions */}
       <WorkflowRunsSection events={events} />
 
-      {/* Event timeline */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -597,15 +590,15 @@ export default function ActivityPanel() {
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
             <Activity
-              size={32}
-              className="mb-3 text-zinc-300 dark:text-zinc-600"
+              size={28}
+              className="mb-3 text-foreground/10"
+              strokeWidth={1.5}
             />
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="text-sm text-foreground/50">
               No activity yet
             </p>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-              Events from Gateway tool calls and Lobster workflow execution will
-              appear here in real time
+            <p className="text-xs text-foreground/35 mt-1">
+              Events will appear here in real time
             </p>
           </div>
         ) : (
@@ -617,17 +610,16 @@ export default function ActivityPanel() {
         )}
       </div>
 
-      {/* Footer with stats */}
       {events.length > 0 && (
-        <div className="border-t border-zinc-200 dark:border-zinc-800 px-4 py-2 flex items-center justify-between text-[10px] text-zinc-400">
+        <div className="border-t border-foreground/[0.06] px-4 py-2 flex items-center justify-between text-[10px] text-foreground/45">
           <span>{events.length} events</span>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+              <span className="h-1 w-1 rounded-full bg-blue-400/60" />
               Gateway: {events.filter((e) => e.actor === "gateway").length}
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-orange-400" />
+              <span className="h-1 w-1 rounded-full bg-foreground/30" />
               Lobster: {events.filter((e) => e.actor === "lobster").length}
             </span>
           </div>

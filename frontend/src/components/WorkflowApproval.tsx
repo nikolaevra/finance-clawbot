@@ -32,9 +32,9 @@ export function WorkflowApprovalCard({
 
   if (status === "approved") {
     return (
-      <div className="mx-4 my-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-900/20 p-4">
-        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-          <CheckCircle2 size={16} />
+      <div className="mx-4 my-2 rounded-2xl bg-emerald-400/[0.06] ring-1 ring-emerald-400/10 p-4">
+        <div className="flex items-center gap-2 text-emerald-400/80">
+          <CheckCircle2 size={15} strokeWidth={1.5} />
           <span className="text-sm font-medium">Workflow approved and resuming</span>
         </div>
       </div>
@@ -43,9 +43,9 @@ export function WorkflowApprovalCard({
 
   if (status === "rejected") {
     return (
-      <div className="mx-4 my-2 rounded-xl border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/20 p-4">
-        <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
-          <XCircle size={16} />
+      <div className="mx-4 my-2 rounded-2xl bg-red-400/[0.06] ring-1 ring-red-400/10 p-4">
+        <div className="flex items-center gap-2 text-red-400/80">
+          <XCircle size={15} strokeWidth={1.5} />
           <span className="text-sm font-medium">Workflow rejected and cancelled</span>
         </div>
       </div>
@@ -53,24 +53,24 @@ export function WorkflowApprovalCard({
   }
 
   return (
-    <div className="mx-4 my-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/20 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <PauseCircle size={16} className="text-amber-600 dark:text-amber-400" />
-        <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
+    <div className="mx-4 my-2 rounded-2xl bg-amber-400/[0.04] ring-1 ring-amber-400/15 p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <PauseCircle size={15} className="text-amber-400/80" strokeWidth={1.5} />
+        <span className="text-sm font-medium text-amber-400/80">
           Workflow Approval Required
         </span>
-        <span className="ml-auto text-xs text-amber-600/70 dark:text-amber-400/70 font-mono">
+        <span className="ml-auto text-[11px] text-foreground/25 font-mono">
           {workflowName}
         </span>
       </div>
-      <p className="text-sm text-zinc-700 dark:text-zinc-300 mb-3">
+      <p className="text-sm text-foreground/55 mb-4">
         {prompt}
       </p>
       <div className="flex items-center gap-2">
         <button
           onClick={() => handleAction(true)}
           disabled={status === "approving"}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-400 shadow-sm shadow-emerald-500/20 disabled:opacity-50"
         >
           {status === "approving" ? (
             <Loader2 size={12} className="animate-spin" />
@@ -82,7 +82,7 @@ export function WorkflowApprovalCard({
         <button
           onClick={() => handleAction(false)}
           disabled={status === "approving"}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-colors hover:bg-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-foreground/[0.06] px-4 py-2 text-xs font-medium text-foreground/50 hover:text-foreground/70 hover:bg-foreground/[0.1] disabled:opacity-50"
         >
           <X size={12} />
           Reject
@@ -93,12 +93,12 @@ export function WorkflowApprovalCard({
 }
 
 const STATUS_CONFIG = {
-  pending: { icon: Loader2, color: "text-zinc-500", label: "Pending", animate: true },
-  running: { icon: PlayCircle, color: "text-blue-500", label: "Running", animate: false },
-  paused: { icon: PauseCircle, color: "text-amber-500", label: "Awaiting Approval", animate: false },
-  completed: { icon: CheckCircle2, color: "text-emerald-500", label: "Completed", animate: false },
-  failed: { icon: AlertTriangle, color: "text-red-500", label: "Failed", animate: false },
-  cancelled: { icon: XCircle, color: "text-zinc-400", label: "Cancelled", animate: false },
+  pending: { icon: Loader2, color: "text-foreground/30", label: "Pending", animate: true },
+  running: { icon: PlayCircle, color: "text-blue-400/80", label: "Running", animate: false },
+  paused: { icon: PauseCircle, color: "text-amber-400/80", label: "Awaiting Approval", animate: false },
+  completed: { icon: CheckCircle2, color: "text-emerald-400/80", label: "Completed", animate: false },
+  failed: { icon: AlertTriangle, color: "text-red-400/80", label: "Failed", animate: false },
+  cancelled: { icon: XCircle, color: "text-foreground/25", label: "Cancelled", animate: false },
 } as const;
 
 interface WorkflowStatusBadgeProps {
@@ -110,8 +110,8 @@ export function WorkflowStatusBadge({ status }: WorkflowStatusBadgeProps) {
   const Icon = config.icon;
 
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium ${config.color}`}>
-      <Icon size={12} className={config.animate ? "animate-spin" : ""} />
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${config.color}`}>
+      <Icon size={11} strokeWidth={1.5} className={config.animate ? "animate-spin" : ""} />
       {config.label}
     </span>
   );

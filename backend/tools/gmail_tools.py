@@ -195,6 +195,7 @@ def gmail_get_message(message_id: str) -> dict:
     name="gmail_send_message",
     label="Send Gmail Message",
     category="gmail",
+    requires_approval=True,
     description=(
         "Send an email from the user's connected Gmail account. "
         "Requires the recipient address, subject, and body text. "
@@ -253,6 +254,202 @@ def gmail_send_message(
         return {"error": err, "tool_used": "gmail_send_message"}
 
 
+# ── gmail_create_draft ───────────────────────────────────────────────
+
+
+@tool_registry.register(
+    name="gmail_create_draft",
+    label="Create Gmail Draft",
+    category="gmail",
+    description=(
+        "Create a draft email in the user's Gmail account without sending it. "
+        "Useful when the user wants to review or edit the message before "
+        "sending. The draft will appear in their Gmail Drafts folder."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "string",
+                "description": "Recipient email address (or comma-separated list).",
+            },
+            "subject": {
+                "type": "string",
+                "description": "Email subject line.",
+            },
+            "body": {
+                "type": "string",
+                "description": "Plain text email body.",
+            },
+            "cc": {
+                "type": "string",
+                "description": "CC recipients (comma-separated). Optional.",
+            },
+        },
+        "required": ["to", "subject", "body"],
+    },
+)
+def gmail_create_draft(
+    to: str,
+    subject: str,
+    body: str,
+    cc: str = "",
+) -> dict:
+    log.info("gmail_create_draft called to=%r subject=%r cc=%r", to, subject, cc)
+    creds = _get_gmail_credentials()
+    if not creds:
+        log.warning("gmail_create_draft aborted — no credentials")
+        return {**_NO_GMAIL, "tool_used": "gmail_create_draft"}
+
+    try:
+        result = gmail_service.create_draft(
+            creds, to=to, subject=subject, body=body, cc=cc,
+        )
+        log.info("gmail_create_draft success draft_id=%s", result.get("id"))
+        return {
+            "tool_used": "gmail_create_draft",
+            "source": "Gmail API",
+            "status": "draft_created",
+            "draft_id": result.get("id"),
+            "message_id": result.get("message_id"),
+            "thread_id": result.get("thread_id"),
+        }
+    except Exception as e:
+        log.exception("gmail_create_draft failed")
+        err = _REAUTH_MSG if _needs_reauth(e) else str(e)
+        return {"error": err, "tool_used": "gmail_create_draft"}
+
+
+# ── gmail_reply_message ──────────────────────────────────────────────
+
+
+@tool_registry.register(
+    name="gmail_reply_message",
+    label="Reply to Gmail Message",
+    category="gmail",
+    requires_approval=True,
+    description=(
+        "Reply to an existing Gmail message. The reply is threaded onto "
+        "the original conversation. Requires the original message ID "
+        "(use gmail_get_message to read the message first) and the reply "
+        "body text."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "message_id": {
+                "type": "string",
+                "description": "The Gmail message ID to reply to.",
+            },
+            "body": {
+                "type": "string",
+                "description": "Plain text reply body.",
+            },
+            "cc": {
+                "type": "string",
+                "description": "CC recipients (comma-separated). Optional.",
+            },
+        },
+        "required": ["message_id", "body"],
+    },
+)
+def gmail_reply_message(
+    message_id: str,
+    body: str,
+    cc: str = "",
+) -> dict:
+    log.info("gmail_reply_message called id=%s cc=%r", message_id, cc)
+    creds = _get_gmail_credentials()
+    if not creds:
+        log.warning("gmail_reply_message aborted — no credentials")
+        return {**_NO_GMAIL, "tool_used": "gmail_reply_message"}
+
+    try:
+        result = gmail_service.reply_message(
+            creds, message_id=message_id, body=body, cc=cc,
+        )
+        log.info("gmail_reply_message success id=%s", result.get("id"))
+        return {
+            "tool_used": "gmail_reply_message",
+            "source": "Gmail API",
+            "status": "sent",
+            "message_id": result.get("id"),
+            "thread_id": result.get("threadId"),
+        }
+    except Exception as e:
+        log.exception("gmail_reply_message failed id=%s", message_id)
+        err = _REAUTH_MSG if _needs_reauth(e) else str(e)
+        return {"error": err, "tool_used": "gmail_reply_message"}
+
+
+# ── gmail_forward_message ───────────────────────────────────────────
+
+
+@tool_registry.register(
+    name="gmail_forward_message",
+    label="Forward Gmail Message",
+    category="gmail",
+    requires_approval=True,
+    description=(
+        "Forward a Gmail message to one or more recipients. Includes the "
+        "original message body with a forwarded-message header. Optionally "
+        "add a comment above the forwarded content."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "message_id": {
+                "type": "string",
+                "description": "The Gmail message ID to forward.",
+            },
+            "to": {
+                "type": "string",
+                "description": "Recipient email address (or comma-separated list).",
+            },
+            "body": {
+                "type": "string",
+                "description": (
+                    "Optional comment to include above the forwarded message."
+                ),
+            },
+            "cc": {
+                "type": "string",
+                "description": "CC recipients (comma-separated). Optional.",
+            },
+        },
+        "required": ["message_id", "to"],
+    },
+)
+def gmail_forward_message(
+    message_id: str,
+    to: str,
+    body: str = "",
+    cc: str = "",
+) -> dict:
+    log.info("gmail_forward_message called id=%s to=%r cc=%r", message_id, to, cc)
+    creds = _get_gmail_credentials()
+    if not creds:
+        log.warning("gmail_forward_message aborted — no credentials")
+        return {**_NO_GMAIL, "tool_used": "gmail_forward_message"}
+
+    try:
+        result = gmail_service.forward_message(
+            creds, message_id=message_id, to=to, body=body, cc=cc,
+        )
+        log.info("gmail_forward_message success id=%s", result.get("id"))
+        return {
+            "tool_used": "gmail_forward_message",
+            "source": "Gmail API",
+            "status": "sent",
+            "message_id": result.get("id"),
+            "thread_id": result.get("threadId"),
+        }
+    except Exception as e:
+        log.exception("gmail_forward_message failed id=%s", message_id)
+        err = _REAUTH_MSG if _needs_reauth(e) else str(e)
+        return {"error": err, "tool_used": "gmail_forward_message"}
+
+
 # ── gmail_modify_labels ──────────────────────────────────────────────
 
 
@@ -260,6 +457,7 @@ def gmail_send_message(
     name="gmail_modify_labels",
     label="Modify Gmail Labels",
     category="gmail",
+    requires_approval=True,
     description=(
         "Add or remove labels on a Gmail message. Common labels include "
         "INBOX, UNREAD, STARRED, IMPORTANT, SPAM, TRASH, or custom label "

@@ -11,6 +11,7 @@ import {
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import type { ActivityEvent } from "@/types";
 import { getActivityStreamUrl, getAuthToken } from "@/lib/api";
+import { logger } from "@/lib/logger";
 
 const MAX_EVENTS = 200;
 const RECONNECT_DELAY = 3000;
@@ -72,6 +73,7 @@ export default function ActivityProvider({
         if (cancelled) return;
 
         const url = getActivityStreamUrl(token);
+        logger.info("activity_stream_connecting", { url });
         const es = new EventSource(url);
         eventSourceRef.current = es;
 
@@ -88,23 +90,33 @@ export default function ActivityProvider({
                 return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
               });
             }
-          } catch {
-            /* ignore malformed frames */
+          } catch (err) {
+            logger.warn("activity_stream_parse_error", {
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         });
 
         es.onopen = () => {
+          logger.info("activity_stream_connected");
           if (!cancelled) setIsConnected(true);
         };
 
         es.onerror = () => {
           if (cancelled) return;
+          logger.warn("activity_stream_error_reconnecting", {
+            reconnectDelayMs: RECONNECT_DELAY,
+          });
           setIsConnected(false);
           es.close();
           eventSourceRef.current = null;
           reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY);
         };
-      } catch {
+      } catch (err) {
+        logger.error("activity_stream_connect_failed", {
+          error: err instanceof Error ? err.message : String(err),
+          reconnectDelayMs: RECONNECT_DELAY,
+        });
         if (!cancelled) {
           setIsConnected(false);
           reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY);

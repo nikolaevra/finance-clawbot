@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy, Check, User, Bot, Wrench, ExternalLink } from "lucide-react";
+import { Copy, Check, Wrench, ExternalLink, ChevronRight, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import Link from "next/link";
 import type { Message, StreamingMessage, ToolMeta, SourceReference } from "@/types";
@@ -18,7 +18,6 @@ import SourcesCitation, {
   typeBadgeClasses,
 } from "./SourcesCitation";
 
-/** Tool names whose results should render as compact citation cards. */
 const DOCUMENT_TOOLS = new Set([
   "document_read",
   "document_list",
@@ -35,9 +34,7 @@ const WORKFLOW_TOOLS = new Set([
 
 interface MessageBubbleProps {
   message: Message | StreamingMessage;
-  /** Resolved tool metadata (name + parsed args) for tool-result messages. */
   toolMeta?: ToolMeta;
-  /** De-duplicated sources for assistant messages (tool-covered sources removed). */
   displaySources?: SourceReference[];
 }
 
@@ -53,16 +50,13 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="absolute right-2 top-2 rounded-md bg-zinc-300/80 dark:bg-zinc-700/80 p-1.5 text-zinc-500 dark:text-zinc-400 opacity-0 transition-opacity hover:text-zinc-800 dark:hover:text-zinc-200 group-hover:opacity-100"
+      className="absolute right-2.5 top-2.5 rounded-lg bg-foreground/[0.08] p-1.5 text-foreground/30 opacity-0 transition-all hover:text-foreground/70 hover:bg-foreground/[0.12] group-hover:opacity-100"
     >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
+      {copied ? <Check size={13} /> : <Copy size={13} />}
     </button>
   );
 }
 
-// ── Helpers for compact tool-result cards ─────────────────────────
-
-/** Derive source_file paths from a tool call's metadata and result. */
 function getToolSourceFiles(
   toolMeta: ToolMeta,
   content: string
@@ -91,7 +85,6 @@ function getToolSourceFiles(
   return [];
 }
 
-/** A human-friendly action label for the tool. */
 function toolActionLabel(toolName: string): string {
   switch (toolName) {
     case "document_read":
@@ -107,13 +100,58 @@ function toolActionLabel(toolName: string): string {
   }
 }
 
-// ── Component ────────────────────────────────────────────────────
+function humanizeToolName(toolName: string): string {
+  return toolName.replaceAll("_", " ");
+}
+
+function oneLine(text: string, maxLen = 90): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
+}
+
+function toolResultPreview(toolMeta: ToolMeta | undefined, content: string): string {
+  const toolName = toolMeta?.name ?? "tool";
+  const prettyTool = humanizeToolName(toolName);
+
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const used = typeof parsed.tool_used === "string" ? parsed.tool_used : toolName;
+    const prettyUsed = humanizeToolName(used);
+
+    if (typeof parsed.error === "string" && parsed.error) {
+      return `${prettyUsed}: error - ${oneLine(parsed.error, 72)}`;
+    }
+    if (typeof parsed.message === "string" && parsed.message) {
+      return `${prettyUsed}: ${oneLine(parsed.message, 72)}`;
+    }
+    if (typeof parsed.total === "number") {
+      return `${prettyUsed}: ${parsed.total} total`;
+    }
+
+    for (const [key, value] of Object.entries(parsed)) {
+      if (Array.isArray(value)) {
+        return `${prettyUsed}: ${value.length} ${key}`;
+      }
+    }
+
+    const keys = Object.keys(parsed);
+    if (keys.length > 0) {
+      return `${prettyUsed}: ${keys.slice(0, 3).join(", ")}`;
+    }
+  } catch {
+    // non-JSON payloads are fine; use text fallback below.
+  }
+
+  return `${prettyTool}: ${oneLine(content, 72) || "completed"}`;
+}
 
 export default function MessageBubble({
   message,
   toolMeta,
   displaySources,
 }: MessageBubbleProps) {
+  const [toolExpanded, setToolExpanded] = useState(false);
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const isStreaming = "isStreaming" in message && message.isStreaming;
@@ -122,70 +160,98 @@ export default function MessageBubble({
   const content = message.content || "";
   const sources = "sources" in message ? message.sources : null;
 
-  // ── Tool result: compact citation card for document/memory tools ──
+  const renderCollapsibleToolResult = (
+    title: string,
+    body: React.ReactNode,
+    headerRight?: React.ReactNode,
+    titleClassName = "text-foreground/30",
+    preview?: string
+  ) => (
+    <div className="flex justify-start px-4 py-1.5">
+      <div className="max-w-[85%] w-full">
+        <button
+          type="button"
+          onClick={() => setToolExpanded((prev) => !prev)}
+          className="mb-1.5 ml-1 inline-flex items-center gap-1.5 text-[11px] font-medium hover:text-foreground/60 transition-colors"
+          aria-expanded={toolExpanded}
+        >
+          {toolExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <Wrench size={11} />
+          <span className={titleClassName}>{title}</span>
+          {!toolExpanded && preview ? (
+            <span className="max-w-[28rem] truncate text-foreground/35">
+              {preview}
+            </span>
+          ) : null}
+          {headerRight}
+          <span className="text-foreground/20">
+            {toolExpanded ? "Collapse" : "Expand"}
+          </span>
+        </button>
+        {toolExpanded ? body : null}
+      </div>
+    </div>
+  );
+
   if (isTool) {
     const isDocumentTool = toolMeta && DOCUMENT_TOOLS.has(toolMeta.name);
 
     if (isDocumentTool) {
       const sourceFiles = getToolSourceFiles(toolMeta, content);
 
-      return (
-        <div className="flex gap-3 px-4 py-2">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-500">
-            <Wrench size={14} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-amber-600 dark:text-amber-500 mb-1.5">
-              {toolActionLabel(toolMeta.name)}
-            </p>
-            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30 overflow-hidden">
-              {sourceFiles.length > 0 ? (
-                sourceFiles.map((sf) => {
-                  const href = sourceHref(sf);
-                  const label = sourceLabel(sf);
+      const preview =
+        sourceFiles.length > 0
+          ? `${humanizeToolName(toolMeta.name)}: ${sourceFiles.length} source file${sourceFiles.length === 1 ? "" : "s"}`
+          : `${humanizeToolName(toolMeta.name)}: no results`;
 
-                  const inner = (
-                    <div className="flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-zinc-100/50 dark:hover:bg-zinc-800/30">
-                      <SourceIcon sourceFile={sf} />
-                      <span className="truncate text-xs font-medium text-zinc-700 dark:text-zinc-300 flex-1">
-                        {label}
-                      </span>
-                      <span
-                        className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${typeBadgeClasses(
-                          sf
-                        )}`}
-                      >
-                        {typeLabel(sf)}
-                      </span>
-                      {href && (
-                        <ExternalLink
-                          size={12}
-                          className="shrink-0 text-zinc-400 dark:text-zinc-500"
-                        />
-                      )}
-                    </div>
-                  );
+      return renderCollapsibleToolResult(
+        toolActionLabel(toolMeta.name),
+        <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] overflow-hidden">
+          {sourceFiles.length > 0 ? (
+            sourceFiles.map((sf) => {
+              const href = sourceHref(sf);
+              const label = sourceLabel(sf);
 
-                  return href ? (
-                    <Link key={sf} href={href} className="block">
-                      {inner}
-                    </Link>
-                  ) : (
-                    <div key={sf}>{inner}</div>
-                  );
-                })
-              ) : (
-                <div className="px-3 py-2.5 text-xs text-zinc-500">
-                  No results found.
+              const inner = (
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 transition-colors hover:bg-foreground/[0.04]">
+                  <SourceIcon sourceFile={sf} />
+                  <span className="truncate text-xs font-medium text-foreground/60 flex-1">
+                    {label}
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${typeBadgeClasses(sf)}`}
+                  >
+                    {typeLabel(sf)}
+                  </span>
+                  {href && (
+                    <ExternalLink
+                      size={11}
+                      className="shrink-0 text-foreground/20"
+                    />
+                  )}
                 </div>
-              )}
+              );
+
+              return href ? (
+                <Link key={sf} href={href} className="block">
+                  {inner}
+                </Link>
+              ) : (
+                <div key={sf}>{inner}</div>
+              );
+            })
+          ) : (
+            <div className="px-3.5 py-2.5 text-xs text-foreground/30">
+              No results found.
             </div>
-          </div>
-        </div>
+          )}
+        </div>,
+        undefined,
+        "text-foreground/30",
+        preview
       );
     }
 
-    // Workflow tool results: render with status badges and approval cards
     if (toolMeta && WORKFLOW_TOOLS.has(toolMeta.name)) {
       let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(content); } catch {}
@@ -195,190 +261,163 @@ export default function MessageBubble({
       const workflowName = parsed.workflow as string | undefined;
 
       if (toolMeta.name === "workflow_run" && runId) {
-        return (
-          <div className="flex gap-3 px-4 py-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-              <Wrench size={14} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <p className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                  Workflow Started
-                </p>
-                {status && <WorkflowStatusBadge status={status as "pending" | "running"} />}
-              </div>
-              <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800/50 p-3 text-xs text-zinc-700 dark:text-zinc-300">
-                <p>{parsed.message as string}</p>
-              </div>
-            </div>
-          </div>
+        return renderCollapsibleToolResult(
+          "Workflow Started",
+          <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3 text-xs text-foreground/60">
+            <p>{parsed.message as string}</p>
+          </div>,
+          status ? <WorkflowStatusBadge status={status as "pending" | "running"} /> : null,
+          "text-blue-400/70",
+          oneLine((parsed.message as string) || `status: ${status ?? "pending"}`)
         );
       }
 
       if (toolMeta.name === "workflow_status" && runId) {
-        return (
-          <div className="flex gap-3 px-4 py-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-              <Wrench size={14} />
+        return renderCollapsibleToolResult(
+          `Workflow Status: ${workflowName}`,
+          typeof parsed.error === "string" && parsed.error ? (
+            <p className="text-xs text-red-400/80 ml-1">{parsed.error}</p>
+          ) : (
+            <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3 text-xs text-foreground/40">
+              No errors reported.
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <p className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                  Workflow Status: {workflowName}
-                </p>
-                {status && <WorkflowStatusBadge status={status as "running" | "completed" | "failed"} />}
-              </div>
-              {parsed.error && (
-                <p className="text-xs text-red-500 mt-1">{parsed.error as string}</p>
-              )}
-            </div>
-          </div>
+          ),
+          status ? (
+            <WorkflowStatusBadge status={status as "running" | "completed" | "failed"} />
+          ) : null,
+          "text-blue-400/70",
+          typeof parsed.error === "string" && parsed.error
+            ? `error: ${oneLine(parsed.error, 60)}`
+            : `status: ${status ?? "unknown"}`
         );
       }
 
       if (toolMeta.name === "workflow_approve" && runId) {
-        return (
-          <div className="flex gap-3 px-4 py-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
-              <Wrench size={14} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mb-1">
-                {parsed.action as string}
-              </p>
-              <p className="text-xs text-zinc-600 dark:text-zinc-400">{parsed.message as string}</p>
-            </div>
-          </div>
+        return renderCollapsibleToolResult(
+          (parsed.action as string) || "Workflow approval",
+          <p className="text-xs text-foreground/40 ml-1">{parsed.message as string}</p>,
+          undefined,
+          "text-emerald-400/70",
+          oneLine((parsed.message as string) || "approval processed")
         );
       }
 
       if (toolMeta.name === "workflow_list") {
         const workflows = (parsed.workflows || []) as Array<Record<string, unknown>>;
-        return (
-          <div className="flex gap-3 px-4 py-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-              <Wrench size={14} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">
-                Available Workflows ({workflows.length})
-              </p>
-              <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800/50 p-2 text-xs space-y-1">
-                {workflows.map((w) => (
-                  <div key={w.name as string} className="flex items-center gap-2">
-                    <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{w.name as string}</span>
-                    {w.schedule && <span className="text-zinc-400 text-[10px]">(scheduled)</span>}
-                  </div>
-                ))}
+        return renderCollapsibleToolResult(
+          `Available Workflows (${workflows.length})`,
+          <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] p-3 text-xs space-y-1">
+            {workflows.map((w) => (
+              <div key={w.name as string} className="flex items-center gap-2">
+                <span className="font-mono font-medium text-foreground/60">{w.name as string}</span>
+                {!!w.schedule && <span className="text-foreground/25 text-[10px]">(scheduled)</span>}
               </div>
-            </div>
-          </div>
+            ))}
+          </div>,
+          undefined,
+          "text-blue-400/70",
+          `${workflows.length} workflow${workflows.length === 1 ? "" : "s"} available`
         );
       }
     }
 
-    // Fallback: non-document tool results render as raw text
+    return renderCollapsibleToolResult(
+      "Tool Result",
+      <pre className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3 text-xs text-foreground/50 overflow-x-auto whitespace-pre-wrap">
+        {content}
+      </pre>,
+      undefined,
+      "text-foreground/30",
+      toolResultPreview(toolMeta, content)
+    );
+  }
+
+  const effectiveSources =
+    displaySources !== undefined ? displaySources : sources;
+
+  if (isUser) {
     return (
-      <div className="flex gap-3 px-4 py-2">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-500">
-          <Wrench size={14} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-amber-600 dark:text-amber-500 mb-1">Tool Result</p>
-          <pre className="rounded-lg bg-zinc-100 dark:bg-zinc-800/50 p-3 text-xs text-zinc-700 dark:text-zinc-300 overflow-x-auto whitespace-pre-wrap">
-            {content}
-          </pre>
+      <div className="flex justify-end px-4 py-1.5">
+        <div className="max-w-[75%] rounded-2xl rounded-br-md bg-blue-500 px-4 py-2.5 text-white shadow-md shadow-blue-500/10">
+          <div className="prose prose-sm max-w-none leading-relaxed prose-p:my-2 prose-p:leading-7 prose-p:text-white prose-strong:text-white prose-headings:my-3 prose-headings:text-white prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:text-blue-50 prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:text-blue-50 prose-a:text-blue-100 prose-a:no-underline hover:prose-a:underline">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {content}
+            </ReactMarkdown>
+          </div>
         </div>
       </div>
     );
   }
 
-  // ── Determine which sources to show on this message ──
-  // displaySources (passed from MessageList, deduped) takes priority;
-  // fall back to message.sources for streaming messages or when
-  // displaySources isn't provided.
-  const effectiveSources =
-    displaySources !== undefined ? displaySources : sources;
-
   return (
-    <div
-      className={`flex gap-3 px-4 py-4 ${
-        isUser ? "" : "bg-zinc-50 dark:bg-zinc-800/30"
-      }`}
-    >
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-          isUser
-            ? "bg-blue-600 text-white"
-            : "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-500"
-        }`}
-      >
-        {isUser ? <User size={14} /> : <Bot size={14} />}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        {!isUser && (thinking || isStreaming) && (
+    <div className="flex justify-start px-4 py-2">
+      <div className="max-w-[85%]">
+        {(thinking || isStreaming) && (
           <ThinkingIndicator thinking={thinking} isStreaming={isStreaming && !content} />
         )}
 
         {content ? (
-          <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-pre:p-0 prose-pre:bg-transparent">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || "");
-                  const codeString = String(children).replace(/\n$/, "");
+          <div className="rounded-2xl bg-foreground/[0.03] px-4 py-3 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
+            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-2.5 prose-p:leading-7 prose-ul:my-2.5 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2.5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:marker:text-foreground/40 prose-blockquote:my-3 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-3 prose-blockquote:text-foreground/75 prose-pre:my-3 prose-pre:p-0 prose-pre:bg-transparent prose-headings:my-4 prose-headings:text-foreground/90 prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  code({ className, children, ...props }) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    const codeString = String(children).replace(/\n$/, "");
 
-                  if (match) {
-                    return (
-                      <div className="group relative my-2 rounded-lg overflow-hidden">
-                        <div className="flex items-center justify-between bg-zinc-200 dark:bg-zinc-800 px-4 py-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-                          <span>{match[1]}</span>
+                    if (match) {
+                      return (
+                        <div className="group relative my-3 rounded-xl overflow-hidden ring-1 ring-foreground/[0.08] shadow-lg shadow-black/20">
+                          <div className="flex items-center justify-between bg-foreground/[0.06] px-4 py-2 text-[11px] text-foreground/30 font-medium">
+                            <span>{match[1]}</span>
+                          </div>
+                          <CopyButton text={codeString} />
+                          <SyntaxHighlighter
+                            style={oneDark}
+                            language={match[1]}
+                            PreTag="div"
+                            customStyle={{
+                              margin: 0,
+                              borderRadius: 0,
+                              background: "var(--card)",
+                              fontSize: "12.5px",
+                            }}
+                          >
+                            {codeString}
+                          </SyntaxHighlighter>
                         </div>
-                        <CopyButton text={codeString} />
-                        <SyntaxHighlighter
-                          style={oneDark}
-                          language={match[1]}
-                          PreTag="div"
-                          customStyle={{
-                            margin: 0,
-                            borderRadius: 0,
-                            background: "#1e1e2e",
-                          }}
-                        >
-                          {codeString}
-                        </SyntaxHighlighter>
-                      </div>
-                    );
-                  }
+                      );
+                    }
 
-                  return (
-                    <code
-                      className="rounded bg-zinc-200 dark:bg-zinc-800 px-1.5 py-0.5 text-sm text-zinc-700 dark:text-zinc-300"
-                      {...props}
-                    >
-                      {children}
-                    </code>
-                  );
-                },
-              }}
-            >
-              {content}
-            </ReactMarkdown>
+                    return (
+                      <code
+                        className="rounded-md bg-foreground/[0.08] px-1.5 py-0.5 text-[13px] text-foreground/70 font-mono"
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
+
+            {effectiveSources && effectiveSources.length > 0 && (
+              <div className="mt-3">
+                <SourcesCitation sources={effectiveSources} />
+              </div>
+            )}
           </div>
         ) : isStreaming ? (
-          <div className="flex items-center gap-1.5 text-zinc-400 dark:text-zinc-500">
-            <div className="h-2 w-2 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500 [animation-delay:0ms]" />
-            <div className="h-2 w-2 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500 [animation-delay:150ms]" />
-            <div className="h-2 w-2 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500 [animation-delay:300ms]" />
+          <div className="flex items-center gap-1 py-2">
+            <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground/20 [animation-delay:0ms]" />
+            <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground/20 [animation-delay:150ms]" />
+            <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground/20 [animation-delay:300ms]" />
           </div>
         ) : null}
-
-        {/* Document/memory source citations (de-duplicated) */}
-        {!isUser && effectiveSources && effectiveSources.length > 0 && (
-          <SourcesCitation sources={effectiveSources} />
-        )}
       </div>
     </div>
   );

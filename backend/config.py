@@ -5,9 +5,18 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 
+def _require_env(key: str) -> str:
+    value = os.getenv(key)
+    if not value:
+        raise RuntimeError(f"{key} is required in .env")
+    return value
+
+
 class Config:
     # Flask
     DEBUG = os.getenv('FLASK_ENV', 'development') == 'development'
+    ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG')
 
     # Supabase
     SUPABASE_URL = os.getenv('SUPABASE_URL', '')
@@ -15,8 +24,9 @@ class Config:
 
     # OpenAI
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'o4-mini')
-    OPENAI_EMBEDDING_MODEL = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')
+    OPENAI_MODEL = _require_env('OPENAI_MODEL')
+    OPENAI_MINI_MODEL = _require_env('OPENAI_MINI_MODEL')
+    OPENAI_EMBEDDING_MODEL = _require_env('OPENAI_EMBEDDING_MODEL')
 
     # Memory
     MEMORY_BUCKET = os.getenv('MEMORY_BUCKET', 'memory')

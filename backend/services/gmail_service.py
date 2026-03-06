@@ -200,6 +200,62 @@ def list_messages(
     return messages
 
 
+# ── attachment helpers ────────────────────────────────────────────────
+
+
+def _extract_attachment_metadata(payload: dict) -> list[dict]:
+    """Walk a message payload and return metadata for every attachment part."""
+    attachments: list[dict] = []
+
+    def _walk(parts: list[dict]) -> None:
+        for part in parts:
+            filename = part.get("filename")
+            if filename and part.get("body", {}).get("attachmentId"):
+                attachments.append({
+                    "attachment_id": part["body"]["attachmentId"],
+                    "filename": filename,
+                    "mime_type": part.get("mimeType", ""),
+                    "size": part.get("body", {}).get("size", 0),
+                })
+            if part.get("parts"):
+                _walk(part["parts"])
+
+    top_parts = payload.get("parts", [])
+    if top_parts:
+        _walk(top_parts)
+    return attachments
+
+
+def list_attachments(credentials_json: str, message_id: str) -> list[dict]:
+    """Return attachment metadata for all files on a message."""
+    log.info("list_attachments id=%s", message_id)
+    service = _build_service(credentials_json)
+    msg = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute()
+    )
+    return _extract_attachment_metadata(msg.get("payload", {}))
+
+
+def download_attachment(
+    credentials_json: str, message_id: str, attachment_id: str,
+) -> bytes:
+    """Download a single attachment by its attachment ID."""
+    log.info("download_attachment msg=%s att=%s", message_id, attachment_id)
+    service = _build_service(credentials_json)
+    att = (
+        service.users()
+        .messages()
+        .attachments()
+        .get(userId="me", messageId=message_id, id=attachment_id)
+        .execute()
+    )
+    data = att.get("data", "")
+    return base64.urlsafe_b64decode(data)
+
+
 # ── get_message ──────────────────────────────────────────────────────
 
 
@@ -235,6 +291,8 @@ def get_message(credentials_json: str, message_id: str) -> dict:
 
     _, from_addr = parseaddr(headers.get("from", ""))
 
+    attachments = _extract_attachment_metadata(payload)
+
     return {
         "id": msg["id"],
         "threadId": msg.get("threadId"),
@@ -247,6 +305,7 @@ def get_message(credentials_json: str, message_id: str) -> dict:
         "snippet": msg.get("snippet", ""),
         "body_text": body_text[:50000],
         "labelIds": msg.get("labelIds", []),
+        "attachments": attachments,
     }
 
 
@@ -270,6 +329,186 @@ def send_message(
     if cc:
         mime["cc"] = cc
     mime.attach(MIMEText(body, "plain"))
+
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
+
+    sent = (
+        service.users()
+        .messages()
+        .send(userId="me", body={"raw": raw})
+        .execute()
+    )
+    return {
+        "id": sent.get("id"),
+        "threadId": sent.get("threadId"),
+        "labelIds": sent.get("labelIds", []),
+    }
+
+
+# ── create_draft ─────────────────────────────────────────────────────
+
+
+def create_draft(
+    credentials_json: str,
+    to: str,
+    subject: str,
+    body: str,
+    cc: str = "",
+) -> dict:
+    """Create a draft email in the user's Gmail account.  Returns the
+    draft ID and underlying message metadata."""
+    log.info("create_draft to=%r subject=%r", to, subject)
+    service = _build_service(credentials_json)
+
+    mime = MIMEMultipart()
+    mime["to"] = to
+    mime["subject"] = subject
+    if cc:
+        mime["cc"] = cc
+    mime.attach(MIMEText(body, "plain"))
+
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
+
+    draft = (
+        service.users()
+        .drafts()
+        .create(userId="me", body={"message": {"raw": raw}})
+        .execute()
+    )
+    return {
+        "id": draft.get("id"),
+        "message_id": draft.get("message", {}).get("id"),
+        "thread_id": draft.get("message", {}).get("threadId"),
+        "label_ids": draft.get("message", {}).get("labelIds", []),
+    }
+
+
+# ── reply_message ────────────────────────────────────────────────────
+
+
+def reply_message(
+    credentials_json: str,
+    message_id: str,
+    body: str,
+    cc: str = "",
+) -> dict:
+    """Reply to an existing Gmail message, preserving the thread.
+
+    Fetches the original message to extract headers (From, Subject,
+    Message-ID) and constructs a properly threaded reply.
+    """
+    log.info("reply_message original_id=%s", message_id)
+    service = _build_service(credentials_json)
+
+    original = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="metadata",
+             metadataHeaders=["Subject", "From", "To", "Message-ID", "References"])
+        .execute()
+    )
+    headers = {
+        h["name"].lower(): h["value"]
+        for h in original.get("payload", {}).get("headers", [])
+    }
+
+    reply_to = headers.get("from", "")
+    subject = headers.get("subject", "")
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+    orig_msg_id = headers.get("message-id", "")
+    references = headers.get("references", "")
+    if orig_msg_id:
+        references = f"{references} {orig_msg_id}".strip()
+    thread_id = original.get("threadId")
+
+    mime = MIMEMultipart()
+    mime["to"] = reply_to
+    mime["subject"] = subject
+    if cc:
+        mime["cc"] = cc
+    if orig_msg_id:
+        mime["In-Reply-To"] = orig_msg_id
+        mime["References"] = references
+    mime.attach(MIMEText(body, "plain"))
+
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
+
+    sent = (
+        service.users()
+        .messages()
+        .send(userId="me", body={"raw": raw, "threadId": thread_id})
+        .execute()
+    )
+    return {
+        "id": sent.get("id"),
+        "threadId": sent.get("threadId"),
+        "labelIds": sent.get("labelIds", []),
+    }
+
+
+# ── forward_message ──────────────────────────────────────────────────
+
+
+def forward_message(
+    credentials_json: str,
+    message_id: str,
+    to: str,
+    body: str = "",
+    cc: str = "",
+) -> dict:
+    """Forward a Gmail message to a new recipient.
+
+    Fetches the original message body, prepends the user's optional
+    comment, and sends to the specified recipient(s).
+    """
+    log.info("forward_message original_id=%s to=%r", message_id, to)
+    service = _build_service(credentials_json)
+
+    original = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute()
+    )
+    headers = {
+        h["name"].lower(): h["value"]
+        for h in original.get("payload", {}).get("headers", [])
+    }
+
+    subject = headers.get("subject", "")
+    if not subject.lower().startswith("fwd:"):
+        subject = f"Fwd: {subject}"
+
+    orig_body = ""
+    payload = original.get("payload", {})
+    if payload.get("body", {}).get("data"):
+        orig_body = base64.urlsafe_b64decode(
+            payload["body"]["data"]
+        ).decode("utf-8", errors="replace")
+    else:
+        for part in payload.get("parts", []):
+            if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
+                orig_body = base64.urlsafe_b64decode(
+                    part["body"]["data"]
+                ).decode("utf-8", errors="replace")
+                break
+
+    fwd_header = (
+        f"\n\n---------- Forwarded message ----------\n"
+        f"From: {headers.get('from', '')}\n"
+        f"Date: {headers.get('date', '')}\n"
+        f"Subject: {headers.get('subject', '')}\n"
+        f"To: {headers.get('to', '')}\n\n"
+    )
+    full_body = body + fwd_header + orig_body
+
+    mime = MIMEMultipart()
+    mime["to"] = to
+    mime["subject"] = subject
+    if cc:
+        mime["cc"] = cc
+    mime.attach(MIMEText(full_body, "plain"))
 
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
 

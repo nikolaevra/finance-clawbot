@@ -24,11 +24,11 @@ from services.workflow_engine import (
     name="workflow_run",
     label="Run Workflow",
     category="workflows",
+    requires_approval=True,
     description=(
         "Trigger a named workflow pipeline. Workflows are multi-step "
         "deterministic pipelines that run in the background (e.g. "
-        "'sync_accounting', 'categorize_transactions', 'generate_financial_report', "
-        "'memory_consolidation', 'detect_anomalies'). Returns the run ID and "
+        "'memory_consolidation'). Returns the run ID and "
         "initial status. If the workflow has approval gates, it will pause and "
         "require explicit approval before continuing."
     ),
@@ -37,7 +37,7 @@ from services.workflow_engine import (
         "properties": {
             "workflow_name": {
                 "type": "string",
-                "description": "Name of the workflow to run (e.g. 'sync_accounting').",
+                "description": "Name of the workflow to run (e.g. 'memory_consolidation').",
             },
             "args": {
                 "type": "object",

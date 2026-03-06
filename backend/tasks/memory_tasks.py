@@ -5,6 +5,7 @@ import logging
 from datetime import date, timedelta
 
 from celery_app import celery
+from config import Config
 
 log = logging.getLogger(__name__)
 from services.supabase_service import get_supabase
@@ -36,7 +37,7 @@ def consolidate_memories(user_id: str, input_data: dict | None = None) -> dict:
 
     client = get_openai()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=Config.OPENAI_MODEL,
         messages=[
             {
                 "role": "system",
@@ -122,6 +123,7 @@ def consolidate_all_users() -> dict:
         .select("user_id")
         .execute()
     ).data or []
+    log.info("memory_consolidation_batch_start candidates=%d", len(users))
 
     seen = set()
     processed = 0
@@ -135,7 +137,9 @@ def consolidate_all_users() -> dict:
             if result.get("consolidated"):
                 apply_memory_consolidation(uid, result)
                 processed += 1
+                log.info("memory_consolidation_user_done user=%s logs=%s", uid, result.get("logs_processed"))
         except Exception:
-            pass
+            log.exception("memory_consolidation_user_failed user=%s", uid)
 
+    log.info("memory_consolidation_batch_done users_processed=%d unique_users=%d", processed, len(seen))
     return {"users_processed": processed}

@@ -8,15 +8,16 @@ documents table.
 from __future__ import annotations
 
 import io
+import logging
 import uuid
-import traceback
 from datetime import date
 
 from services.supabase_service import get_supabase
 from services.memory_service import _ensure_bucket, _storage, append_daily_log, ensure_daily_file
 from services.embedding_service import index_memory_file
 from services.openai_service import summarize_document
-from config import Config
+
+log = logging.getLogger(__name__)
 
 
 # ── Allowed file types ────────────────────────────────────────────────
@@ -170,7 +171,13 @@ def process_document(user_id: str, document_id: str, storage_path: str, file_typ
         text = extract_text(file_bytes, file_type)
 
         if not text.strip():
-            print(f"[document_service] No text extracted from {document_id} (type={file_type})")
+            log.warning(
+                "document_extract_empty user=%s doc=%s type=%s path=%s",
+                user_id,
+                document_id,
+                file_type,
+                storage_path,
+            )
             sb.table("documents").update({
                 "status": "error",
                 "extracted_text": "",
@@ -209,11 +216,21 @@ def process_document(user_id: str, document_id: str, storage_path: str, file_typ
                     today_source = f"daily/{date.today().isoformat()}.md"
                     index_memory_file(user_id, today_source, updated_daily)
         except Exception:
-            print(f"[document_service] Summarisation failed (non-blocking):\n{traceback.format_exc()}")
+            log.exception(
+                "document_summary_failed_non_blocking user=%s doc=%s",
+                user_id,
+                document_id,
+            )
 
     except Exception as e:
         # Mark as error
-        print(f"[document_service] process_document FAILED for {document_id}:\n{traceback.format_exc()}")
+        log.exception(
+            "process_document_failed user=%s doc=%s type=%s path=%s",
+            user_id,
+            document_id,
+            file_type,
+            storage_path,
+        )
         sb.table("documents").update({
             "status": "error",
         }).eq("id", document_id).execute()

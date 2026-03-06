@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 import sys
 
+from config import Config
+
 
 LOG_FORMAT = (
     "%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s"
@@ -15,15 +17,21 @@ LOG_FORMAT = (
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-def setup_logging(level: int = logging.DEBUG) -> None:
+def _parse_level(raw: str) -> int:
+    level = getattr(logging, str(raw).upper(), None)
+    return level if isinstance(level, int) else logging.INFO
+
+
+def setup_logging(level: int | None = None) -> None:
     root = logging.getLogger()
     if root.handlers:
         return
 
+    effective_level = level if level is not None else _parse_level(Config.LOG_LEVEL)
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
     root.addHandler(handler)
-    root.setLevel(level)
+    root.setLevel(effective_level)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

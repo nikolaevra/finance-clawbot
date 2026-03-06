@@ -44,48 +44,42 @@ export default function MemoriesPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-6 py-4">
-        <Brain size={20} className="text-purple-400" />
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Memories</h1>
+      <div className="flex items-center gap-3 px-6 py-5">
+        <Brain size={18} className="text-blue-400" strokeWidth={1.5} />
+        <h1 className="text-lg font-semibold text-foreground/85 tracking-tight">Memories</h1>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div className="flex-1 overflow-y-auto px-6 py-2">
         {loading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="flex items-center gap-2 text-zinc-500">
-              <Loader2 size={20} className="animate-spin" />
-              <span className="text-sm">Loading memories...</span>
-            </div>
+          <div className="flex items-center justify-center py-16">
+            <Loader2 size={20} className="animate-spin text-foreground/20" />
           </div>
         )}
 
         {!loading && memories && (
-          <div className="mx-auto max-w-2xl space-y-6">
-            {/* Long-term memory (MEMORY.md) */}
+          <div className="mx-auto max-w-2xl space-y-8">
             {memories.long_term.exists && (
               <div>
-                <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <h2 className="mb-3 text-[11px] font-medium uppercase tracking-wider text-foreground/25">
                   Long-term Memory
                 </h2>
                 <button
                   onClick={() => router.push("/chat/memories/long-term")}
-                  className="flex w-full items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-100/50 dark:hover:bg-zinc-800/50"
+                  className="flex w-full items-center gap-3 rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3.5 text-left transition-all hover:bg-foreground/[0.07] hover:ring-foreground/[0.1]"
                 >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-purple-500/10">
-                    <Brain size={18} className="text-purple-400" />
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-400/10">
+                    <Brain size={16} className="text-blue-400" strokeWidth={1.5} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    <p className="text-sm font-medium text-foreground/75">
                       MEMORY.md
                     </p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-foreground/30">
                       Curated long-term facts and preferences
                     </p>
                   </div>
                   {memories.long_term.access_count > 0 && (
-                    <span className="shrink-0 rounded-full bg-zinc-200 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    <span className="shrink-0 rounded-full bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-medium text-foreground/30">
                       {memories.long_term.access_count} access
                       {memories.long_term.access_count !== 1 ? "es" : ""}
                     </span>
@@ -94,10 +88,9 @@ export default function MemoriesPage() {
               </div>
             )}
 
-            {/* Daily logs grouped by date */}
             {memoryGroups.map((group) => (
               <div key={group.label}>
-                <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <h2 className="mb-3 text-[11px] font-medium uppercase tracking-wider text-foreground/25">
                   {group.label}
                 </h2>
                 <div className="space-y-1.5">
@@ -107,19 +100,19 @@ export default function MemoriesPage() {
                       onClick={() =>
                         router.push(`/chat/memories/daily/${mem.date}`)
                       }
-                      className="flex w-full items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-100/50 dark:hover:bg-zinc-800/50"
+                      className="flex w-full items-center gap-3 rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3.5 text-left transition-all hover:bg-foreground/[0.07] hover:ring-foreground/[0.1]"
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
-                        <Calendar size={18} className="text-blue-400" />
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.06]">
+                        <Calendar size={16} className="text-foreground/40" strokeWidth={1.5} />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        <p className="text-sm font-medium text-foreground/75">
                           {mem.date}
                         </p>
-                        <p className="text-xs text-zinc-500">Daily log</p>
+                        <p className="text-xs text-foreground/30">Daily log</p>
                       </div>
                       {mem.access_count > 0 && (
-                        <span className="shrink-0 rounded-full bg-zinc-200 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                        <span className="shrink-0 rounded-full bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-medium text-foreground/30">
                           {mem.access_count} access
                           {mem.access_count !== 1 ? "es" : ""}
                         </span>
@@ -130,16 +123,15 @@ export default function MemoriesPage() {
               </div>
             ))}
 
-            {/* Empty state */}
             {memoryGroups.length === 0 && !memories.long_term.exists && (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-200/50 dark:bg-zinc-800/50">
-                  <FileText size={28} className="text-zinc-400 dark:text-zinc-600" />
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground/[0.04]">
+                  <FileText size={24} className="text-foreground/15" strokeWidth={1.5} />
                 </div>
-                <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                <p className="text-sm font-medium text-foreground/40">
                   No memories yet
                 </p>
-                <p className="mt-1 max-w-xs text-xs text-zinc-500">
+                <p className="mt-1.5 max-w-xs text-xs text-foreground/20">
                   Start chatting and the AI will create memories automatically.
                 </p>
               </div>

@@ -17,18 +17,23 @@ CREATE INDEX IF NOT EXISTS idx_skills_user_enabled
 -- RLS
 ALTER TABLE skills ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS skills_select ON skills;
 CREATE POLICY skills_select ON skills
     FOR SELECT USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS skills_insert ON skills;
 CREATE POLICY skills_insert ON skills
     FOR INSERT WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS skills_update ON skills;
 CREATE POLICY skills_update ON skills
     FOR UPDATE USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS skills_delete ON skills;
 CREATE POLICY skills_delete ON skills
     FOR DELETE USING (user_id = auth.uid());
 
 -- Service-role bypass
+DROP POLICY IF EXISTS skills_service ON skills;
 CREATE POLICY skills_service ON skills
     FOR ALL USING (auth.role() = 'service_role');

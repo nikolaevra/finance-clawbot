@@ -7,7 +7,6 @@ export default function ThemeToggle() {
   const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
-    // Check for saved preference or system preference
     const saved = localStorage.getItem("theme");
     if (saved === "light") {
       setIsDark(false);
@@ -33,10 +32,10 @@ export default function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200"
+      className="flex items-center justify-center w-10 h-10 rounded-xl text-foreground/30 hover:text-foreground/60 hover:bg-foreground/[0.06]"
       aria-label="Toggle theme"
     >
-      {isDark ? <Sun size={18} /> : <Moon size={18} />}
+      {isDark ? <Sun size={16} strokeWidth={1.5} /> : <Moon size={16} strokeWidth={1.5} />}
     </button>
   );
 }

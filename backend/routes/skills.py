@@ -16,6 +16,7 @@ from tools.registry import tool_registry
 skills_bp = Blueprint("skills", __name__)
 
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+_AT_TOOL_RE = re.compile(r"(?<![A-Za-z0-9_])@([a-z][a-z0-9_]*)")
 
 
 def _validate_skill_name(name: str) -> str | None:
@@ -28,6 +29,16 @@ def _validate_skill_name(name: str) -> str | None:
             "and underscores (1-63 chars, must start with letter or number)."
         )
     return None
+
+
+def _resolve_tool_mentions(content: str) -> str:
+    """Resolve @tool mentions to canonical tool names when known."""
+
+    def _replace(match: re.Match[str]) -> str:
+        tool_name = match.group(1)
+        return tool_name if tool_registry.get_tool(tool_name) else match.group(0)
+
+    return _AT_TOOL_RE.sub(_replace, content)
 
 
 # ── Tool catalog (read-only) ─────────────────────────────────────────
@@ -67,7 +78,7 @@ def create_skill():
     """Create a new skill."""
     body = request.get_json(silent=True) or {}
     name = body.get("name", "").strip()
-    content = body.get("content", "").strip()
+    content = _resolve_tool_mentions(body.get("content", "")).strip()
 
     error = _validate_skill_name(name)
     if error:
@@ -89,7 +100,7 @@ def create_skill():
 def update_skill(name: str):
     """Update an existing skill's content."""
     body = request.get_json(silent=True) or {}
-    content = body.get("content", "").strip()
+    content = _resolve_tool_mentions(body.get("content", "")).strip()
 
     if not content:
         return jsonify({"error": "Skill content is required."}), 400

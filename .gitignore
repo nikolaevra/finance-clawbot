@@ -19,6 +19,8 @@ frontend/out/
 
 # Redis
 dump.rdb
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
 
 # Logs
 *.log

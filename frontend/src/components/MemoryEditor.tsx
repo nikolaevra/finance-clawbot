@@ -28,7 +28,6 @@ export default function MemoryEditor({
   const [accessLog, setAccessLog] = useState<MemoryAccessLogEntry[]>([]);
   const [logLoading, setLogLoading] = useState(true);
 
-  // Load access log
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -36,7 +35,7 @@ export default function MemoryEditor({
         const log = await fetchMemoryAccessLog(sourceFile);
         if (!cancelled) setAccessLog(log);
       } catch {
-        // Access log is best-effort
+        // best-effort
       } finally {
         if (!cancelled) setLogLoading(false);
       }
@@ -62,7 +61,6 @@ export default function MemoryEditor({
     }
   }, [content, onSave]);
 
-  // Keyboard shortcut: Cmd/Ctrl + S to save
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
@@ -74,7 +72,6 @@ export default function MemoryEditor({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleSave]);
 
-  // Deduplicate access log by conversation for the summary
   const conversationSummary = accessLog.reduce(
     (acc, entry) => {
       const existing = acc.find(
@@ -102,103 +99,100 @@ export default function MemoryEditor({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Top bar */}
-      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
+      <div className="flex items-center justify-between px-4 py-3.5 border-b border-foreground/[0.06]">
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push("/chat/memories")}
-            className="rounded-lg p-1.5 text-zinc-500 dark:text-zinc-400 transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200"
+            className="rounded-lg p-1.5 text-foreground/30 hover:text-foreground/60 hover:bg-foreground/[0.06]"
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={16} strokeWidth={1.5} />
           </button>
           <div>
-            <h1 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{title}</h1>
-            <p className="text-xs text-zinc-500">{sourceFile}</p>
+            <h1 className="text-sm font-medium text-foreground/80">{title}</h1>
+            <p className="text-[11px] text-foreground/25">{sourceFile}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {error && (
-            <span className="text-xs text-red-500 dark:text-red-400">{error}</span>
+            <span className="text-xs text-red-400/80">{error}</span>
           )}
           <button
             onClick={handleSave}
             disabled={saving}
-            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-sm font-medium transition-all ${
               saved
-                ? "bg-green-600/20 text-green-600 dark:text-green-400"
-                : "bg-zinc-200 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+                ? "bg-emerald-400/10 text-emerald-400/80"
+                : "bg-foreground/[0.06] text-foreground/60 hover:text-foreground/80 hover:bg-foreground/[0.1]"
             }`}
           >
             {saving ? (
-              <Loader2 size={14} className="animate-spin" />
+              <Loader2 size={13} className="animate-spin" />
             ) : saved ? (
-              <Check size={14} />
+              <Check size={13} />
             ) : (
-              <Save size={14} />
+              <Save size={13} strokeWidth={1.5} />
             )}
             {saving ? "Saving..." : saved ? "Saved" : "Save"}
           </button>
         </div>
       </div>
 
-      {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Editor */}
         <div className="flex flex-1 flex-col">
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            className="flex-1 resize-none bg-white dark:bg-zinc-950 p-4 font-mono text-sm text-zinc-800 dark:text-zinc-200 outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+            className="flex-1 resize-none bg-transparent p-5 font-mono text-sm text-foreground/70 outline-none placeholder:text-foreground/15 leading-relaxed"
             placeholder="Memory content..."
             spellCheck={false}
           />
         </div>
 
-        {/* Access log panel */}
-        <div className="w-72 shrink-0 border-l border-zinc-200 dark:border-zinc-800 overflow-y-auto">
-          <div className="p-3">
-            <h2 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">
+        <div className="hidden md:block w-72 shrink-0 border-l border-foreground/[0.06] overflow-y-auto">
+          <div className="p-4">
+            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-wider text-foreground/25">
               Access Log
             </h2>
 
             {logLoading ? (
-              <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <div className="flex items-center gap-2 text-xs text-foreground/25">
                 <Loader2 size={12} className="animate-spin" />
                 Loading...
               </div>
             ) : conversationSummary.length === 0 ? (
-              <p className="text-xs text-zinc-400 dark:text-zinc-600">
+              <p className="text-[11px] text-foreground/20">
                 No conversations have referenced this memory yet.
               </p>
             ) : (
               <>
-                <p className="mb-3 text-xs text-zinc-500">
+                <p className="mb-3 text-[11px] text-foreground/30">
                   Referenced {accessLog.length} time
                   {accessLog.length !== 1 ? "s" : ""} across{" "}
                   {conversationSummary.length} conversation
                   {conversationSummary.length !== 1 ? "s" : ""}
                 </p>
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   {conversationSummary.map((entry) => (
                     <button
                       key={entry.conversation_id}
                       onClick={() =>
                         router.push(`/chat/${entry.conversation_id}`)
                       }
-                      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
+                      className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-foreground/[0.04]"
                     >
                       <MessageSquare
-                        size={13}
-                        className="mt-0.5 shrink-0 text-zinc-500"
+                        size={12}
+                        className="mt-0.5 shrink-0 text-foreground/25"
+                        strokeWidth={1.5}
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                        <p className="truncate text-xs font-medium text-foreground/50">
                           {entry.conversation_title}
                         </p>
-                        <p className="text-[10px] text-zinc-500">
+                        <p className="text-[10px] text-foreground/20">
                           {entry.count} reference
                           {entry.count !== 1 ? "s" : ""}{" "}
-                          &middot;{" "}
+                          /{" "}
                           {new Date(entry.last_accessed).toLocaleDateString()}
                         </p>
                       </div>

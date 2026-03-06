@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useMemo, Fragment } from "react";
-import type { Message, StreamingMessage, ToolMeta, SourceReference } from "@/types";
+import { useEffect, useLayoutEffect, useRef, useMemo, Fragment } from "react";
+import type { Message, StreamingMessage, ToolMeta, SourceReference, PendingToolApproval } from "@/types";
 import MessageBubble from "./MessageBubble";
+import { ToolApprovalCard } from "./ToolApprovalCard";
 
 interface MessageListProps {
   messages: Message[];
   streamingMessage: StreamingMessage | null;
+  pendingApproval?: PendingToolApproval | null;
+  onResolveApproval?: (approved: boolean) => void;
+  conversationId?: string | null;
 }
 
-/** Return a human-friendly label for a calendar day. */
 function formatDayLabel(date: Date): string {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -28,7 +31,6 @@ function formatDayLabel(date: Date): string {
   });
 }
 
-/** Get the calendar-day key (YYYY-MM-DD) for a message timestamp. */
 function dayKey(dateStr: string): string {
   const d = new Date(dateStr);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -36,12 +38,12 @@ function dayKey(dateStr: string): string {
 
 function DaySeparator({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 py-4 px-4">
-      <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-      <span className="text-xs font-medium text-zinc-500 whitespace-nowrap">
+    <div className="flex items-center gap-4 py-6 px-4">
+      <div className="h-px flex-1 bg-foreground/[0.06]" />
+      <span className="text-[11px] font-medium text-foreground/20 tracking-wide">
         {label}
       </span>
-      <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+      <div className="h-px flex-1 bg-foreground/[0.06]" />
     </div>
   );
 }
@@ -49,20 +51,23 @@ function DaySeparator({ label }: { label: string }) {
 export default function MessageList({
   messages,
   streamingMessage,
+  pendingApproval,
+  onResolveApproval,
+  conversationId,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const hasScrolledInitially = useRef(false);
+  const prevConversationId = useRef<string | null | undefined>(undefined);
 
-  // Scroll to bottom instantly when messages first appear (initial load)
-  useEffect(() => {
-    if (messages.length > 0 && !hasScrolledInitially.current) {
-      hasScrolledInitially.current = true;
+  // Scroll to bottom instantly whenever the conversation changes
+  useLayoutEffect(() => {
+    if (conversationId !== prevConversationId.current) {
+      prevConversationId.current = conversationId;
       bottomRef.current?.scrollIntoView();
     }
-  }, [messages]);
+  }, [conversationId, messages]);
 
-  // Auto-scroll when new content arrives
+  // Auto-scroll on new streaming content when already near the bottom
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -75,15 +80,6 @@ export default function MessageList({
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, streamingMessage?.content, streamingMessage?.thinking]);
-
-  // ── Tool-call metadata resolution ─────────────────────────────
-  // Build a map of tool_call_id → {name, args} so tool-result messages
-  // can be rendered as compact citation cards instead of raw text dumps.
-  // Also track which source_files are already covered by tool calls so
-  // the SourcesCitation on the final assistant message doesn't duplicate.
-  //
-  // NOTE: This hook MUST be called before the early return below so
-  // that the number / order of hooks is stable across renders.
 
   const { toolCallMap, toolSourceFiles } = useMemo(() => {
     const map = new Map<string, ToolMeta>();
@@ -103,7 +99,6 @@ export default function MessageList({
           }
           map.set(tc.id, { name: tc.function.name, args });
 
-          // Track source files covered by document/memory tools
           if (tc.function.name === "document_read" && args.filename) {
             sourceFiles.add(`documents/${args.filename}`);
           } else if (tc.function.name === "memory_read") {
@@ -115,15 +110,11 @@ export default function MessageList({
                 `daily/${new Date().toISOString().split("T")[0]}.md`
               );
             }
-          } else if (tc.function.name === "memory_search") {
-            // memory_search sources are extracted from the result, not args.
-            // We'll resolve them from the matching tool message below.
           }
         }
       }
     }
 
-    // Second pass: resolve memory_search sources from tool result content
     for (const msg of messages) {
       if (msg.role === "tool" && msg.tool_call_id && msg.content) {
         const meta = map.get(msg.tool_call_id);
@@ -143,30 +134,32 @@ export default function MessageList({
     return { toolCallMap: map, toolSourceFiles: sourceFiles };
   }, [messages]);
 
-  // Empty-state: show welcome screen
   if (messages.length === 0 && !streamingMessage) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold text-zinc-800 dark:text-zinc-200">
-            Finance Assistant
-          </h2>
-          <p className="mt-2 text-zinc-500 dark:text-zinc-500">
-            How can I help you today?
-          </p>
+        <div className="text-center space-y-3">
+          <div className="mx-auto w-12 h-12 rounded-2xl bg-foreground/[0.06] flex items-center justify-center">
+            <span className="text-xl">✦</span>
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-foreground/80 tracking-tight">
+              Finance Assistant
+            </h2>
+            <p className="mt-1 text-sm text-foreground/30">
+              How can I help you today?
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
-  // Build list with day separators inserted between date boundaries
   let lastDay = "";
 
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-2xl py-4">
         {messages.map((msg) => {
-          // Skip assistant messages that carry only tool_calls with no visible content
           if (
             msg.role === "assistant" &&
             !msg.content &&
@@ -176,7 +169,6 @@ export default function MessageList({
             return null;
           }
 
-          // Skip any non-tool message with no content at all (system, empty assistant, etc.)
           if (
             msg.role !== "tool" &&
             msg.role !== "user" &&
@@ -189,14 +181,11 @@ export default function MessageList({
           const showSeparator = currentDay !== lastDay;
           lastDay = currentDay;
 
-          // Resolve tool metadata for tool-result messages
           const toolMeta =
             msg.role === "tool" && msg.tool_call_id
               ? toolCallMap.get(msg.tool_call_id)
               : undefined;
 
-          // For assistant messages with sources, filter out sources
-          // that are already shown as tool-result citation cards
           let displaySources: SourceReference[] | undefined;
           if (msg.role === "assistant" && msg.sources && msg.sources.length > 0) {
             const filtered = msg.sources.filter(
@@ -221,7 +210,13 @@ export default function MessageList({
           );
         })}
         {streamingMessage && <MessageBubble message={streamingMessage} />}
-        <div ref={bottomRef} className="h-4" />
+        {pendingApproval && onResolveApproval && (
+          <ToolApprovalCard
+            approval={pendingApproval}
+            onResolve={onResolveApproval}
+          />
+        )}
+        <div ref={bottomRef} className="h-6" />
       </div>
     </div>
   );

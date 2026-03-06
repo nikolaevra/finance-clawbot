@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import type { Message, StreamingMessage, ToolCall, SourceReference } from "@/types";
-import { sendMessage, fetchConversation } from "@/lib/api";
+import type {
+  Message,
+  StreamingMessage,
+  ToolCall,
+  SourceReference,
+  PendingToolApproval,
+} from "@/types";
+import { sendMessage, fetchConversation, approveToolCalls } from "@/lib/api";
+import { logger } from "@/lib/logger";
 
 interface UseChatOptions {
   conversationId: string | null;
@@ -15,6 +22,8 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
     useState<StreamingMessage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] =
+    useState<PendingToolApproval | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const onTitleUpdateRef = useRef(onTitleUpdate);
   onTitleUpdateRef.current = onTitleUpdate;
@@ -28,6 +37,10 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
         const data = await fetchConversation(id);
         setMessages(data.messages || []);
       } catch (err) {
+        logger.error("chat_load_messages_failed", {
+          conversationId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
         setError(
           err instanceof Error ? err.message : "Failed to load messages"
         );
@@ -66,11 +79,17 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
         toolCalls: null,
         sources: null,
         isStreaming: true,
+        pendingApproval: null,
       });
 
       try {
+        logger.info("chat_send_start", { conversationId });
         const response = await sendMessage(conversationId, text);
         if (!response.ok) {
+          logger.warn("chat_send_http_error", {
+            conversationId,
+            status: response.status,
+          });
           throw new Error("Chat request failed");
         }
 
@@ -153,6 +172,23 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
                       onTitleUpdateRef.current(parsed.title);
                     }
                     break;
+                  case "tool_approval_needed": {
+                    const approval: PendingToolApproval = {
+                      conversationId: parsed.conversation_id as string,
+                      toolCalls: (parsed.tool_calls ?? []) as PendingToolApproval["toolCalls"],
+                    };
+                    setPendingApproval(approval);
+                    setStreamingMessage((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            isStreaming: false,
+                            pendingApproval: approval,
+                          }
+                        : null
+                    );
+                    break;
+                  }
                   case "done":
                     setStreamingMessage((prev) =>
                       prev ? { ...prev, isStreaming: false } : null
@@ -167,8 +203,12 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
                     setStreamingMessage(null);
                     break;
                 }
-              } catch {
-                // Ignore JSON parse errors
+              } catch (err) {
+                logger.warn("chat_stream_parse_error", {
+                  conversationId,
+                  eventType,
+                  error: err instanceof Error ? err.message : String(err),
+                });
               }
               // Reset eventType after processing data
               eventType = "";
@@ -177,6 +217,10 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
           }
         }
       } catch (err) {
+        logger.error("chat_send_failed", {
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
         setError(
           err instanceof Error ? err.message : "Failed to send message"
         );
@@ -190,10 +234,163 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
     [conversationId, isLoading, loadMessages]
   );
 
+  const resolveApproval = useCallback(
+    async (approved: boolean) => {
+      if (!pendingApproval || !conversationId) return;
+
+      const toolCallIds = pendingApproval.toolCalls.map((tc) => tc.id);
+      setPendingApproval(null);
+      setIsLoading(true);
+      setStreamingMessage({
+        role: "assistant",
+        content: "",
+        thinking: "",
+        toolCalls: null,
+        sources: null,
+        isStreaming: true,
+        pendingApproval: null,
+      });
+
+      try {
+        logger.info("chat_approval_start", {
+          conversationId,
+          approved,
+          toolCallCount: toolCallIds.length,
+        });
+        const response = await approveToolCalls(
+          conversationId,
+          toolCallIds,
+          approved
+        );
+        if (!response.ok) {
+          logger.warn("chat_approval_http_error", {
+            conversationId,
+            status: response.status,
+          });
+          throw new Error("Approval request failed");
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventType = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n");
+          buffer = parts.pop() || "";
+
+          for (const line of parts) {
+            if (line.startsWith("event: ")) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              const data = line.slice(6);
+              try {
+                const parsed = JSON.parse(data);
+                switch (eventType) {
+                  case "thinking":
+                    setStreamingMessage((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            thinking:
+                              prev.thinking + (parsed.content as string),
+                          }
+                        : null
+                    );
+                    break;
+                  case "content":
+                    setStreamingMessage((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            content:
+                              prev.content + (parsed.content as string),
+                          }
+                        : null
+                    );
+                    break;
+                  case "tool_call":
+                    setStreamingMessage((prev) => {
+                      if (!prev) return null;
+                      const tc = parsed.tool_call as ToolCall;
+                      const existing = prev.toolCalls
+                        ? [...prev.toolCalls]
+                        : [];
+                      const idx = parsed.index as number;
+                      existing[idx] = tc;
+                      return { ...prev, toolCalls: existing };
+                    });
+                    break;
+                  case "tool_approval_needed": {
+                    const approval2: PendingToolApproval = {
+                      conversationId: parsed.conversation_id as string,
+                      toolCalls: (parsed.tool_calls ?? []) as PendingToolApproval["toolCalls"],
+                    };
+                    setPendingApproval(approval2);
+                    setStreamingMessage((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            isStreaming: false,
+                            pendingApproval: approval2,
+                          }
+                        : null
+                    );
+                    break;
+                  }
+                  case "done":
+                    setStreamingMessage((prev) =>
+                      prev ? { ...prev, isStreaming: false } : null
+                    );
+                    break;
+                  case "error":
+                    setError(
+                      typeof parsed.error === "string"
+                        ? parsed.error
+                        : "Stream error"
+                    );
+                    setStreamingMessage(null);
+                    break;
+                }
+              } catch (err) {
+                logger.warn("chat_approval_stream_parse_error", {
+                  conversationId,
+                  eventType,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+              eventType = "";
+            }
+          }
+        }
+      } catch (err) {
+        logger.error("chat_approval_failed", {
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        setError(
+          err instanceof Error ? err.message : "Failed to process approval"
+        );
+      } finally {
+        setStreamingMessage(null);
+        setIsLoading(false);
+        await loadMessages();
+      }
+    },
+    [pendingApproval, conversationId, loadMessages]
+  );
+
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
     setStreamingMessage(null);
     setIsLoading(false);
+    setPendingApproval(null);
   }, []);
 
   return {
@@ -201,7 +398,9 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
     streamingMessage,
     isLoading,
     error,
+    pendingApproval,
     send,
+    resolveApproval,
     cancel,
     loadMessages,
     setMessages,

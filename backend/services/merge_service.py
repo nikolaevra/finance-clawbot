@@ -6,8 +6,13 @@ and paginated fetching of accounts / transactions.
 """
 from __future__ import annotations
 
+import logging
+import time
+
 import requests
 from config import Config
+
+log = logging.getLogger(__name__)
 
 MERGE_BASE = "https://api.merge.dev/api"
 ACCOUNTING_V1 = f"{MERGE_BASE}/accounting/v1"
@@ -52,6 +57,8 @@ def create_link_token(
     if integration_slug:
         body["integration"] = integration_slug
 
+    started = time.monotonic()
+    log.info("merge_create_link_token_start user=%s integration=%s", user_id, integration_slug or "picker")
     resp = requests.post(
         f"{ACCOUNTING_V1}/link-token",
         headers=_headers(),
@@ -59,6 +66,7 @@ def create_link_token(
         timeout=30,
     )
     resp.raise_for_status()
+    log.info("merge_create_link_token_done user=%s status=%s duration_ms=%.0f", user_id, resp.status_code, (time.monotonic() - started) * 1000)
     return resp.json()
 
 
@@ -71,12 +79,15 @@ def exchange_public_token(public_token: str) -> dict:
 
     Returns ``{"account_token": "...", "integration": {...}}``.
     """
+    started = time.monotonic()
+    log.info("merge_exchange_public_token_start")
     resp = requests.get(
         f"{ACCOUNTING_V1}/account-token/{public_token}",
         headers=_headers(),
         timeout=30,
     )
     resp.raise_for_status()
+    log.info("merge_exchange_public_token_done status=%s duration_ms=%.0f", resp.status_code, (time.monotonic() - started) * 1000)
     return resp.json()
 
 
@@ -87,13 +98,22 @@ def _fetch_all_pages(url: str, account_token: str, params: dict | None = None) -
     results: list[dict] = []
     params = dict(params or {})
     # Merge uses cursor-based pagination
+    page_count = 0
+    started = time.monotonic()
     while url:
+        page_count += 1
         resp = requests.get(url, headers=_headers(account_token), params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
         results.extend(data.get("results", []))
         url = data.get("next")  # full URL or None
         params = {}  # params are baked into the ``next`` URL
+    log.info(
+        "merge_fetch_pages_done pages=%d items=%d duration_ms=%.0f",
+        page_count,
+        len(results),
+        (time.monotonic() - started) * 1000,
+    )
     return results
 
 
@@ -121,6 +141,55 @@ def fetch_transactions(
     return _fetch_all_pages(f"{ACCOUNTING_V1}/transactions", account_token, params)
 
 
+# ── Create bill ────────────────────────────────────────────────
+
+
+def create_bill(
+    account_token: str,
+    vendor_id: str,
+    line_items: list[dict],
+    issue_date: str | None = None,
+    due_date: str | None = None,
+    currency: str = "USD",
+    memo: str | None = None,
+) -> dict:
+    """Create a bill (accounts-payable) in the connected accounting system.
+
+    Works for both QBO and NetSuite — Merge normalises the payload.
+
+    *line_items* is a list of dicts, each with at minimum:
+        - ``description`` (str)
+        - ``total_amount`` (number)
+    and optionally:
+        - ``account`` (str) — remote account ID to post against
+        - ``quantity`` (number)
+        - ``unit_price`` (number)
+    """
+    model: dict = {
+        "vendor": vendor_id,
+        "currency": currency,
+        "line_items": line_items,
+    }
+    if issue_date:
+        model["issue_date"] = issue_date
+    if due_date:
+        model["due_date"] = due_date
+    if memo:
+        model["memo"] = memo
+
+    started = time.monotonic()
+    log.info("merge_create_bill_start vendor=%s items=%d", vendor_id, len(line_items))
+    resp = requests.post(
+        f"{ACCOUNTING_V1}/bills",
+        headers=_headers(account_token),
+        json={"model": model},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    log.info("merge_create_bill_done status=%s duration_ms=%.0f", resp.status_code, (time.monotonic() - started) * 1000)
+    return resp.json()
+
+
 # ── Disconnect ────────────────────────────────────────────────
 
 def delete_account(account_token: str) -> bool:
@@ -129,12 +198,15 @@ def delete_account(account_token: str) -> bool:
     account_token.  Returns True on success.
     """
     try:
+        started = time.monotonic()
         resp = requests.post(
             f"{ACCOUNTING_V1}/delete-account",
             headers=_headers(account_token),
             timeout=30,
         )
         resp.raise_for_status()
+        log.info("merge_delete_account_done status=%s duration_ms=%.0f", resp.status_code, (time.monotonic() - started) * 1000)
         return True
     except Exception:
+        log.exception("merge_delete_account_failed")
         return False

@@ -2,6 +2,9 @@
 
 These can be called as workflow steps (``user_id, input_data``) or as
 standalone Celery tasks.
+
+All accounting data is fetched live from the Merge.dev API rather than
+from local Supabase tables.
 """
 from __future__ import annotations
 
@@ -13,8 +16,62 @@ from celery_app import celery
 
 log = logging.getLogger(__name__)
 from services.supabase_service import get_supabase
+from services.merge_service import fetch_accounts, fetch_transactions
 from services.openai_service import get_openai
 from config import Config
+
+
+def _get_accounting_token(user_id: str) -> str | None:
+    """Return the Merge.dev account_token for the user's active accounting integration."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("integrations")
+            .select("account_token")
+            .eq("user_id", user_id)
+            .in_("provider", ["quickbooks", "netsuite"])
+            .eq("status", "active")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]["account_token"]
+    except Exception:
+        log.exception("accounting token lookup failed user=%s", user_id)
+    return None
+
+
+def _fetch_live_transactions(user_id: str, days: int = 30, limit: int = 200) -> list[dict]:
+    """Fetch transactions from the live Merge.dev API for the given user."""
+    token = _get_accounting_token(user_id)
+    if not token:
+        return []
+
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    raw = fetch_transactions(token, modified_after=cutoff)
+
+    txns = []
+    for t in raw[:limit]:
+        contact_name = None
+        contact_ref = t.get("contact")
+        if isinstance(contact_ref, dict):
+            contact_name = contact_ref.get("name")
+        elif isinstance(contact_ref, str) and contact_ref:
+            contact_name = contact_ref
+
+        txns.append({
+            "id": t.get("id", ""),
+            "transaction_date": t.get("transaction_date"),
+            "memo": t.get("memo") or t.get("description"),
+            "total_amount": t.get("total_amount"),
+            "contact_name": contact_name,
+            "account_name": str(t.get("account") or ""),
+            "transaction_type": (t.get("transaction_type") or "").lower() or None,
+        })
+
+    txns.sort(key=lambda x: x.get("transaction_date") or "", reverse=True)
+    return txns
 
 
 # ---------------------------------------------------------------------------
@@ -22,23 +79,14 @@ from config import Config
 # ---------------------------------------------------------------------------
 
 def categorize_transactions(user_id: str, input_data: dict | None = None) -> dict:
-    """Use an LLM to suggest categories for uncategorized transactions.
+    """Use an LLM to suggest categories for recent transactions (fetched live).
 
     Returns ``{"suggestions": [{"transaction_id": ..., "suggested_category": ..., "reason": ...}]}``.
     """
     input_data = input_data or {}
     limit = input_data.get("limit", 50)
 
-    sb = get_supabase()
-    result = (
-        sb.table("accounting_transactions")
-        .select("id, transaction_date, memo, total_amount, contact_name, account_name, transaction_type")
-        .eq("user_id", user_id)
-        .order("transaction_date", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    transactions = result.data or []
+    transactions = _fetch_live_transactions(user_id, days=30, limit=limit)
     if not transactions:
         return {"suggestions": [], "message": "No transactions found"}
 
@@ -46,7 +94,7 @@ def categorize_transactions(user_id: str, input_data: dict | None = None) -> dic
 
     client = get_openai()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=Config.OPENAI_MINI_MODEL,
         messages=[
             {
                 "role": "system",
@@ -76,27 +124,10 @@ def categorize_transactions(user_id: str, input_data: dict | None = None) -> dic
 
 
 def apply_categories(user_id: str, input_data: dict | None = None) -> dict:
-    """Apply previously suggested categories to transactions.
-
-    Expects ``input_data`` to contain ``suggestions`` from ``categorize_transactions``.
-    """
+    """Return previously suggested categories (no local storage to update)."""
     input_data = input_data or {}
     suggestions = input_data.get("suggestions", [])
-    if not suggestions:
-        return {"applied": 0}
-
-    sb = get_supabase()
-    applied = 0
-    for s in suggestions:
-        txn_id = s.get("transaction_id")
-        category = s.get("suggested_category")
-        if txn_id and category:
-            sb.table("accounting_transactions").update({
-                "memo": f"[{category}] " + (s.get("original_memo") or ""),
-            }).eq("id", txn_id).eq("user_id", user_id).execute()
-            applied += 1
-
-    return {"applied": applied}
+    return {"applied": 0, "suggestions": suggestions, "message": "Categories are advisory only; no local data store."}
 
 
 def detect_anomalies(user_id: str, input_data: dict | None = None) -> dict:
@@ -106,19 +137,8 @@ def detect_anomalies(user_id: str, input_data: dict | None = None) -> dict:
     """
     input_data = input_data or {}
     days = input_data.get("days", 30)
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
 
-    sb = get_supabase()
-    result = (
-        sb.table("accounting_transactions")
-        .select("id, transaction_date, memo, total_amount, contact_name, account_name, transaction_type")
-        .eq("user_id", user_id)
-        .gte("transaction_date", cutoff)
-        .order("transaction_date", desc=True)
-        .limit(200)
-        .execute()
-    )
-    transactions = result.data or []
+    transactions = _fetch_live_transactions(user_id, days=days, limit=200)
     if not transactions:
         return {"anomalies": [], "message": "No recent transactions"}
 
@@ -152,33 +172,36 @@ def detect_anomalies(user_id: str, input_data: dict | None = None) -> dict:
 
 
 def generate_financial_summary(user_id: str, input_data: dict | None = None) -> dict:
-    """Generate a structured financial report using AI."""
+    """Generate a structured financial report using AI with live API data."""
     input_data = input_data or {}
     days = input_data.get("days", 30)
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
 
-    sb = get_supabase()
+    token = _get_accounting_token(user_id)
+    if not token:
+        return {"report": "No active accounting integration found.", "period_days": days}
 
-    accounts = (
-        sb.table("accounting_accounts")
-        .select("name, classification, type, current_balance, currency")
-        .eq("user_id", user_id)
-        .execute()
-    ).data or []
+    try:
+        raw_accounts = fetch_accounts(token)
+    except Exception:
+        raw_accounts = []
 
-    transactions = (
-        sb.table("accounting_transactions")
-        .select("transaction_date, memo, total_amount, contact_name, account_name, transaction_type")
-        .eq("user_id", user_id)
-        .gte("transaction_date", cutoff)
-        .order("transaction_date", desc=True)
-        .limit(300)
-        .execute()
-    ).data or []
+    accounts = [
+        {
+            "name": a.get("name", ""),
+            "classification": (a.get("classification") or "").lower(),
+            "type": (a.get("type") or "").lower(),
+            "current_balance": a.get("current_balance"),
+            "currency": a.get("currency") or "USD",
+        }
+        for a in raw_accounts
+    ]
+
+    transactions = _fetch_live_transactions(user_id, days=days, limit=300)
 
     if not accounts and not transactions:
         return {"report": "No financial data available.", "period_days": days}
 
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
     data_block = json.dumps({
         "accounts": accounts[:50],
         "recent_transactions": transactions[:100],
@@ -187,7 +210,7 @@ def generate_financial_summary(user_id: str, input_data: dict | None = None) -> 
 
     client = get_openai()
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=Config.OPENAI_MINI_MODEL,
         messages=[
             {
                 "role": "system",
@@ -212,14 +235,16 @@ def generate_financial_summary(user_id: str, input_data: dict | None = None) -> 
 
 @celery.task(name="tasks.analysis_tasks.run_anomaly_detection_all")
 def run_anomaly_detection_all() -> dict:
-    """Run anomaly detection for all users with active integrations."""
+    """Run anomaly detection for all users with active accounting integrations."""
     sb = get_supabase()
     users = (
         sb.table("integrations")
         .select("user_id")
         .eq("status", "active")
+        .in_("provider", ["quickbooks", "netsuite"])
         .execute()
     ).data or []
+    log.info("anomaly_detection_batch_start candidates=%d", len(users))
 
     seen = set()
     results = []
@@ -231,7 +256,10 @@ def run_anomaly_detection_all() -> dict:
         try:
             result = detect_anomalies(uid)
             results.append({"user_id": uid, "anomalies": result.get("count", 0)})
+            log.info("anomaly_detection_user_done user=%s anomalies=%d", uid, result.get("count", 0))
         except Exception:
+            log.exception("anomaly_detection_user_failed user=%s", uid)
             results.append({"user_id": uid, "error": True})
 
+    log.info("anomaly_detection_batch_done users_processed=%d", len(results))
     return {"users_processed": len(results), "results": results}

@@ -17,98 +17,6 @@ from services.supabase_service import get_supabase
 
 TEMPLATES = [
     {
-        "name": "sync_accounting",
-        "description": "Sync accounting data (accounts and transactions) from the connected accounting system via Merge.dev.",
-        "schedule": "0 */6 * * *",
-        "steps": [
-            {
-                "id": "verify",
-                "name": "Verify connection",
-                "task": "tasks.sync_tasks.verify_connection",
-                "timeout_seconds": 30,
-            },
-            {
-                "id": "fetch_accounts",
-                "name": "Fetch accounts from Merge.dev",
-                "task": "tasks.sync_tasks.fetch_merge_accounts",
-                "input_from": "$verify",
-                "timeout_seconds": 120,
-            },
-            {
-                "id": "fetch_transactions",
-                "name": "Fetch transactions from Merge.dev",
-                "task": "tasks.sync_tasks.fetch_merge_transactions",
-                "input_from": "$fetch_accounts",
-                "timeout_seconds": 120,
-            },
-            {
-                "id": "upsert",
-                "name": "Upsert data into database",
-                "task": "tasks.sync_tasks.upsert_accounting_data",
-                "input_from": "$fetch_transactions",
-                "timeout_seconds": 180,
-            },
-        ],
-    },
-    {
-        "name": "categorize_transactions",
-        "description": "Use AI to suggest categories for recent transactions, then apply after approval.",
-        "steps": [
-            {
-                "id": "categorize",
-                "name": "AI categorization",
-                "task": "tasks.analysis_tasks.categorize_transactions",
-                "args": {"limit": 50},
-                "timeout_seconds": 120,
-            },
-            {
-                "id": "review",
-                "name": "Review suggested categories",
-                "approval": {
-                    "required": True,
-                    "prompt": "Review the AI-suggested categories. Approve to apply them to your transactions.",
-                },
-            },
-            {
-                "id": "apply",
-                "name": "Apply categories",
-                "task": "tasks.analysis_tasks.apply_categories",
-                "input_from": "$categorize",
-                "condition": "$review.approved",
-                "timeout_seconds": 60,
-            },
-        ],
-    },
-    {
-        "name": "generate_financial_report",
-        "description": "Generate an AI-powered financial summary report and save it to your memory.",
-        "steps": [
-            {
-                "id": "generate",
-                "name": "Generate financial summary",
-                "task": "tasks.analysis_tasks.generate_financial_summary",
-                "args": {"days": 30},
-                "timeout_seconds": 120,
-            },
-            {
-                "id": "review",
-                "name": "Review report",
-                "approval": {
-                    "required": True,
-                    "prompt": "Review the generated financial report. Approve to save it to your daily memory.",
-                },
-            },
-            {
-                "id": "save",
-                "name": "Save report to memory",
-                "task": "tasks.memory_tasks.save_report_to_memory",
-                "input_from": "$generate",
-                "condition": "$review.approved",
-                "timeout_seconds": 30,
-            },
-        ],
-    },
-    {
         "name": "memory_consolidation",
         "description": "Consolidate recent daily notes into long-term memory (MEMORY.md).",
         "schedule": "0 0 * * *",
@@ -138,25 +46,24 @@ TEMPLATES = [
             },
         ],
     },
-    {
-        "name": "detect_anomalies",
-        "description": "Detect unusual transactions based on statistical analysis of recent activity.",
-        "schedule": "30 8 * * *",
-        "steps": [
-            {
-                "id": "detect",
-                "name": "Run anomaly detection",
-                "task": "tasks.analysis_tasks.detect_anomalies",
-                "args": {"days": 30},
-                "timeout_seconds": 60,
-            },
-        ],
-    },
 ]
 
 
 def seed():
     sb = get_supabase()
+    allowed_template_names = {tpl["name"] for tpl in TEMPLATES}
+
+    # Keep only the supported system templates.
+    existing_system_templates = (
+        sb.table("workflow_templates")
+        .select("id, name")
+        .is_("user_id", "null")
+        .execute()
+    ).data or []
+    for existing in existing_system_templates:
+        if existing["name"] not in allowed_template_names:
+            sb.table("workflow_templates").delete().eq("id", existing["id"]).execute()
+            print(f"  Deleted: {existing['name']}")
 
     for tpl in TEMPLATES:
         existing = (

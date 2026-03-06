@@ -95,48 +95,46 @@ export default function SkillsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+        <Loader2 className="h-5 w-5 animate-spin text-foreground/20" />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 pb-24 md:pb-6">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-violet-500">
-          <Sparkles size={22} />
+    <div className="mx-auto max-w-2xl px-6 py-6 pb-24 md:pb-6">
+      <div className="flex items-center gap-3 mb-8">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/10">
+          <Sparkles size={20} className="text-blue-400" strokeWidth={1.5} />
         </div>
         <div className="flex-1">
-          <h1 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200">
+          <h1 className="text-lg font-semibold text-foreground/85 tracking-tight">
             Skills
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs text-foreground/30">
             User-defined capabilities the AI can activate
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={refresh}
-            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            className="flex items-center gap-1.5 rounded-xl ring-1 ring-foreground/[0.08] px-3 py-1.5 text-xs font-medium text-foreground/40 hover:text-foreground/60 hover:bg-foreground/[0.06]"
           >
-            <RefreshCw size={12} />
+            <RefreshCw size={12} strokeWidth={1.5} />
             Refresh
           </button>
           <button
             onClick={() => setShowNewForm(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 transition-colors"
+            className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-blue-400 shadow-sm shadow-blue-500/20"
           >
-            <Plus size={12} />
+            <Plus size={12} strokeWidth={1.5} />
             New Skill
           </button>
         </div>
       </div>
 
-      {/* New skill form */}
       {showNewForm && (
-        <div className="mb-4 rounded-xl border border-violet-200 dark:border-violet-800/50 bg-violet-50/50 dark:bg-violet-950/20 p-4">
-          <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200 mb-2">
+        <div className="mb-5 rounded-2xl bg-blue-400/[0.04] ring-1 ring-blue-400/10 p-5">
+          <h3 className="text-sm font-medium text-foreground/75 mb-3">
             Create New Skill
           </h3>
           <div className="flex items-center gap-2">
@@ -146,13 +144,13 @@ export default function SkillsPage() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreate()}
               placeholder="skill-name (lowercase, hyphens)"
-              className="flex-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 outline-none focus:border-violet-400 dark:focus:border-violet-500 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+              className="flex-1 rounded-xl bg-foreground/[0.06] ring-1 ring-foreground/[0.08] px-4 py-2 text-sm text-foreground/85 outline-none focus:ring-foreground/[0.2] placeholder:text-foreground/20"
               autoFocus
             />
             <button
               onClick={handleCreate}
               disabled={creating}
-              className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 transition-colors disabled:opacity-50"
+              className="rounded-xl bg-blue-500 px-4 py-2 text-xs font-medium text-white hover:bg-blue-400 disabled:opacity-50"
             >
               {creating ? (
                 <Loader2 size={12} className="animate-spin" />
@@ -166,31 +164,31 @@ export default function SkillsPage() {
                 setNewName("");
                 setNewError(null);
               }}
-              className="rounded-lg border border-zinc-200 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="rounded-xl ring-1 ring-foreground/[0.08] px-4 py-2 text-xs font-medium text-foreground/40 hover:text-foreground/60 hover:bg-foreground/[0.06]"
             >
               Cancel
             </button>
           </div>
           {newError && (
-            <p className="mt-2 text-xs text-red-500 dark:text-red-400">
+            <p className="mt-2.5 text-xs text-red-400/80">
               {newError}
             </p>
           )}
         </div>
       )}
 
-      {/* Skills list */}
       <div className="space-y-3">
         {skills.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center">
+          <div className="rounded-2xl border-2 border-dashed border-foreground/[0.08] p-10 text-center">
             <Sparkles
-              size={32}
-              className="mx-auto mb-2 text-zinc-300 dark:text-zinc-600"
+              size={28}
+              className="mx-auto mb-3 text-foreground/10"
+              strokeWidth={1.5}
             />
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="text-sm text-foreground/35">
               No skills created yet
             </p>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+            <p className="text-xs text-foreground/20 mt-1">
               Skills are markdown files that teach the AI new capabilities
             </p>
           </div>
@@ -198,30 +196,30 @@ export default function SkillsPage() {
           skills.map((skill) => (
             <div
               key={skill.id}
-              className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 p-4"
+              className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] p-5 transition-all hover:bg-foreground/[0.06]"
             >
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200 font-mono">
+                    <h3 className="text-sm font-medium text-foreground/75 font-mono">
                       {skill.name}
                     </h3>
                     <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                         skill.enabled
-                          ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                          : "bg-zinc-200 dark:bg-zinc-800 text-zinc-500"
+                          ? "bg-emerald-400/10 text-emerald-400/80"
+                          : "bg-foreground/[0.06] text-foreground/30"
                       }`}
                     >
                       {skill.enabled ? "Active" : "Disabled"}
                     </span>
                   </div>
                   {skill.description && (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                    <p className="text-xs text-foreground/35 mt-1.5">
                       {skill.description}
                     </p>
                   )}
-                  <p className="text-[11px] text-zinc-400 mt-1.5">
+                  <p className="text-[11px] text-foreground/20 mt-2">
                     Updated{" "}
                     {new Date(skill.updated_at).toLocaleDateString(undefined, {
                       month: "short",
@@ -230,22 +228,22 @@ export default function SkillsPage() {
                     })}
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => handleToggle(skill.name, skill.enabled)}
                     disabled={togglingId === skill.name}
-                    className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                    className="p-2 rounded-lg text-foreground/25 hover:text-foreground/50 hover:bg-foreground/[0.06] disabled:opacity-50"
                     title={skill.enabled ? "Disable" : "Enable"}
                   >
                     {togglingId === skill.name ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={15} className="animate-spin" />
                     ) : skill.enabled ? (
                       <ToggleRight
-                        size={16}
-                        className="text-green-500"
+                        size={15}
+                        className="text-emerald-400/80"
                       />
                     ) : (
-                      <ToggleLeft size={16} />
+                      <ToggleLeft size={15} />
                     )}
                   </button>
                   <button
@@ -254,21 +252,21 @@ export default function SkillsPage() {
                         `/chat/skills/${encodeURIComponent(skill.name)}`
                       )
                     }
-                    className="p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                    className="p-2 rounded-lg text-foreground/25 hover:text-foreground/50 hover:bg-foreground/[0.06]"
                     title="Edit"
                   >
-                    <Pencil size={16} />
+                    <Pencil size={14} strokeWidth={1.5} />
                   </button>
                   <button
                     onClick={() => handleDelete(skill.name)}
                     disabled={deletingName === skill.name}
-                    className="p-1.5 rounded-lg text-zinc-500 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 transition-colors disabled:opacity-50"
+                    className="p-2 rounded-lg text-foreground/25 hover:text-red-400 hover:bg-red-400/10 disabled:opacity-50"
                     title="Delete"
                   >
                     {deletingName === skill.name ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <Trash2 size={16} />
+                      <Trash2 size={14} strokeWidth={1.5} />
                     )}
                   </button>
                 </div>

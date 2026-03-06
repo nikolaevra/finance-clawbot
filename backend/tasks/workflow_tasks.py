@@ -25,11 +25,7 @@ from services.workflow_engine import (
 
 
 _WORKFLOW_LABELS = {
-    "sync_accounting": "Sync Accounting Data",
-    "categorize_transactions": "Categorize Transactions",
-    "generate_financial_report": "Generate Financial Report",
     "memory_consolidation": "Memory Consolidation",
-    "detect_anomalies": "Detect Anomalies",
 }
 
 
@@ -131,8 +127,9 @@ def _approval_preview(steps_state: list, current_index: int) -> dict | None:
 def execute_workflow(self, run_id: str) -> dict:
     """Walk through workflow steps starting from ``current_step_index``."""
     sb = get_supabase()
+    task_id = getattr(getattr(self, "request", None), "id", None)
 
-    log.info("execute_workflow started run=%s", run_id)
+    log.info("execute_workflow started run=%s task_id=%s", run_id, task_id or "-")
     run = (
         sb.table("workflow_runs")
         .select("*, workflow_templates(steps, name)")
@@ -237,11 +234,11 @@ def execute_workflow(self, run_id: str) -> dict:
 
         try:
             step_input = _resolve_step_input(step_def, steps_state, input_args)
-            log.info("run=%s executing step %d task=%s", run_id, i, task_path)
+            log.info("run=%s task_id=%s executing step %d task=%s", run_id, task_id or "-", i, task_path)
             result = _call_step_task(task_path, user_id, step_input)
             step_state["status"] = "completed"
             step_state["result"] = result
-            log.info("run=%s step %d completed", run_id, i)
+            log.info("run=%s task_id=%s step %d completed", run_id, task_id or "-", i)
 
             summary = _summarize_result(result)
             complete_msg = f"Completed: {step_name}"
@@ -252,7 +249,7 @@ def execute_workflow(self, run_id: str) -> dict:
                    "step_id": step_id,
                    "message": complete_msg})
         except Exception as exc:
-            log.exception("run=%s step %d failed task=%s", run_id, i, task_path)
+            log.exception("run=%s task_id=%s step %d failed task=%s", run_id, task_id or "-", i, task_path)
             step_state["status"] = "failed"
             step_state["result"] = {"error": str(exc), "traceback": traceback.format_exc()[:500]}
             steps_state[i] = step_state

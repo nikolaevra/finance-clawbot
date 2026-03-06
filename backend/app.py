@@ -1,5 +1,6 @@
 import logging
 import time
+import uuid
 
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
@@ -22,14 +23,29 @@ def create_app() -> Flask:
     @app.before_request
     def _log_request_start():
         g.req_start = time.monotonic()
+        # Reuse incoming request IDs from proxies/CDNs, otherwise generate one.
+        g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        if request.path != "/api/health":
+            log.info(
+                "request_start id=%s method=%s path=%s ip=%s ua=%s auth=%s",
+                g.request_id,
+                request.method,
+                request.path,
+                request.headers.get("X-Forwarded-For", request.remote_addr or "-"),
+                request.user_agent.string[:120] if request.user_agent else "-",
+                "yes" if request.headers.get("Authorization") else "no",
+            )
 
     @app.after_request
     def _log_request_end(response):
+        request_id = getattr(g, "request_id", "-")
+        response.headers["X-Request-ID"] = request_id
         if request.path == "/api/health":
             return response
         elapsed = (time.monotonic() - getattr(g, "req_start", 0)) * 1000
         log.info(
-            "%s %s %s (%.0fms) user=%s",
+            "request_end id=%s method=%s path=%s status=%s duration_ms=%.0f user=%s",
+            request_id,
             request.method,
             request.path,
             response.status_code,
@@ -45,12 +61,22 @@ def create_app() -> Flask:
 
     @app.errorhandler(500)
     def _server_error(e):
-        log.exception("Unhandled 500 error on %s %s", request.method, request.path)
+        log.exception(
+            "Unhandled 500 error id=%s method=%s path=%s",
+            getattr(g, "request_id", "-"),
+            request.method,
+            request.path,
+        )
         return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(Exception)
     def _handle_exception(e):
-        log.exception("Unhandled exception on %s %s", request.method, request.path)
+        log.exception(
+            "Unhandled exception id=%s method=%s path=%s",
+            getattr(g, "request_id", "-"),
+            request.method,
+            request.path,
+        )
         return jsonify({"error": "Internal server error"}), 500
 
     # ── Register blueprints ───────────────────────────────────────

@@ -1,44 +1,43 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import ChatArea from "@/components/ChatArea";
 import { useChat } from "@/lib/hooks/useChat";
-import { fetchCurrentConversation } from "@/lib/api";
+import { useConversations } from "@/components/ConversationProvider";
 
 export default function ChatPage() {
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const { activeConversationId, activeConversation, updateConversationTitle } =
+    useConversations();
 
   const {
     messages,
     streamingMessage,
     isLoading,
     error,
+    pendingApproval,
     send,
+    resolveApproval,
     setMessages,
   } = useChat({
-    conversationId,
+    conversationId: activeConversationId,
+    onTitleUpdate: useCallback(
+      (title: string) => {
+        if (activeConversationId) {
+          updateConversationTitle(activeConversationId, title);
+        }
+      },
+      [activeConversationId, updateConversationTitle]
+    ),
   });
 
-  // On mount, load the single conversation (get-or-create)
+  // When active conversation changes, load its messages
   useEffect(() => {
-    let cancelled = false;
-
-    async function init() {
-      try {
-        const conv = await fetchCurrentConversation();
-        if (cancelled) return;
-        setConversationId(conv.id);
-        setMessages(conv.messages || []);
-      } catch {
-        // Will be handled by error state in useChat or retry
-      }
+    if (activeConversation) {
+      setMessages(activeConversation.messages || []);
+    } else {
+      setMessages([]);
     }
-
-    init();
-    return () => {
-      cancelled = true;
-    };
-  }, [setMessages]);
+  }, [activeConversation, setMessages]);
 
   const handleSend = useCallback(
     (message: string) => {
@@ -59,6 +58,9 @@ export default function ChatPage() {
         streamingMessage={streamingMessage}
         onSend={handleSend}
         isLoading={isLoading}
+        pendingApproval={pendingApproval}
+        onResolveApproval={resolveApproval}
+        conversationId={activeConversationId}
       />
     </>
   );

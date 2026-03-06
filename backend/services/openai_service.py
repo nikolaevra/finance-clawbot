@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import platform
+from datetime import datetime, timezone
 import tiktoken
 from openai import OpenAI
 from config import Config
 from tools.registry import tool_registry
 
 _client: OpenAI | None = None
+log = logging.getLogger(__name__)
 
 
 def get_openai() -> OpenAI:
@@ -17,12 +21,18 @@ def get_openai() -> OpenAI:
     return _client
 
 
-_TOOL_TRANSPARENCY_INSTRUCTION = (
-    "When you use any tool (memory, document, or accounting), always tell the "
-    "user which tool you used, summarise the data it returned, and state the "
-    "source it came from (e.g. 'QuickBooks Online via Merge.dev, last synced "
-    "2 hours ago'). The tool response includes `tool_used` and `source` fields "
-    "— use those in your answer."
+_TOOL_TRANSPARENCY_FALLBACK = (
+    "You have tools for memory, documents, accounting (QuickBooks/NetSuite via "
+    "Merge.dev — list accounts, search transactions, create bills), "
+    "Float (card transactions, account transactions, bill payments, "
+    "reimbursements, users, cards), and Gmail (list, read, send, draft, reply, "
+    "forward, and label messages). "
+    "When a user asks about financial data, spend, transactions, emails, or "
+    "anything that a tool can answer, ALWAYS call the appropriate tool — never "
+    "guess or say data is unavailable without trying the tool first. "
+    "After using a tool, tell the user which tool you used, summarise the data "
+    "it returned, and state the source (from the `tool_used` and `source` fields "
+    "in the response)."
 )
 
 
@@ -36,46 +46,68 @@ _SKILLS_INSTRUCTION = (
 )
 
 
+def _build_runtime_context() -> str:
+    """Build a runtime context block with date, time, and model info."""
+    now = datetime.now(timezone.utc)
+    return (
+        f"[Runtime]\n"
+        f"Date: {now.strftime('%A, %B %d, %Y')}\n"
+        f"Time: {now.strftime('%H:%M')} UTC\n"
+        f"OS: {platform.system()} {platform.release()}\n"
+        f"Model: {Config.OPENAI_MODEL}"
+    )
+
+
 def build_messages(
     history: list[dict],
     memory_context: str | None = None,
     retrieved_context: str | None = None,
     history_hours: int | None = None,
     skills_context: str | None = None,
+    bootstrap_context: str | None = None,
 ) -> list[dict]:
     """
     Convert DB message rows into the OpenAI messages format.
 
-    If memory_context is provided (non-empty), it is prepended as the first
-    system message.  This is read-only session context (today + yesterday
-    daily logs), never a write.
-
-    If retrieved_context is provided (non-empty), it is injected as a second
-    system message containing RAG results from the memory index.
-
-    If history_hours is provided, a system message is injected informing the
-    model that the conversation history only covers the last N hours, so it
-    should rely on memory tools for older context.
-
-    If skills_context is provided, it is injected as a system message with
-    the compact skills list so the agent can discover and activate skills.
+    Injection order (matching OpenClaw's prompt architecture):
+    1. bootstrap_context — SOUL → IDENTITY → USER → AGENTS → TOOLS (→ BOOTSTRAP on first run)
+    2. Tool transparency fallback (only when bootstrap is empty)
+    3. Runtime context (date, time, OS, model)
+    4. Skills list
+    5. Memory context (today + yesterday daily logs)
+    6. RAG-retrieved memories
+    7. History window notice
+    8. Conversation history
     """
     messages: list[dict] = []
 
-    # Inject tool-transparency instruction as the very first system message
+    # 1. Bootstrap files (personality, identity, user, operating instructions, tools, onboarding)
+    if bootstrap_context:
+        messages.append({
+            'role': 'system',
+            'content': bootstrap_context,
+        })
+    else:
+        # Fallback: if no bootstrap files exist yet, inject basic tool guidance
+        messages.append({
+            'role': 'system',
+            'content': _TOOL_TRANSPARENCY_FALLBACK,
+        })
+
+    # 2. Runtime context
     messages.append({
         'role': 'system',
-        'content': _TOOL_TRANSPARENCY_INSTRUCTION,
+        'content': _build_runtime_context(),
     })
 
-    # Inject skills list so the agent can discover user-defined skills
+    # 3. Skills list so the agent can discover user-defined skills
     if skills_context:
         messages.append({
             'role': 'system',
             'content': _SKILLS_INSTRUCTION + skills_context,
         })
 
-    # Inject memory context as the first system message
+    # 4. Memory context (today + yesterday daily logs)
     if memory_context:
         messages.append({
             'role': 'system',
@@ -85,7 +117,7 @@ def build_messages(
             ),
         })
 
-    # Inject RAG-retrieved memories as a second system message
+    # 5. RAG-retrieved memories
     if retrieved_context:
         messages.append({
             'role': 'system',
@@ -95,7 +127,7 @@ def build_messages(
             ),
         })
 
-    # Inform the model about its limited conversation history window
+    # 6. History window notice
     if history_hours:
         messages.append({
             'role': 'system',
@@ -187,6 +219,7 @@ def run_flush_completion(messages: list[dict]) -> list[dict] | None:
     try:
         response = client.chat.completions.create(**kwargs)
     except Exception:
+        log.exception("flush_completion_failed")
         return None
 
     choice = response.choices[0] if response.choices else None
@@ -302,7 +335,7 @@ def generate_title(user_message: str, assistant_message: str) -> str:
     client = get_openai()
     try:
         response = client.chat.completions.create(
-            model='gpt-4o-mini',
+            model=Config.OPENAI_MINI_MODEL,
             messages=[
                 {
                     'role': 'system',
@@ -316,6 +349,7 @@ def generate_title(user_message: str, assistant_message: str) -> str:
         title = response.choices[0].message.content.strip()
         return title[:100]  # Safety cap
     except Exception:
+        log.exception("generate_title_failed")
         return 'New Chat'
 
 
@@ -328,12 +362,12 @@ _SUMMARIZE_PROMPT = (
     "This summary will be stored in the user's daily notes for future reference."
 )
 
-_SUMMARIZE_MAX_CHARS = 15_000  # ~4k tokens for gpt-4o-mini
+_SUMMARIZE_MAX_CHARS = 15_000  # ~4k tokens for the configured mini model
 
 
 def summarize_document(text: str, filename: str) -> str | None:
     """
-    Generate a brief summary of a document using gpt-4o-mini.
+    Generate a brief summary of a document using the configured mini model.
 
     Returns None on failure so a summarisation error never blocks the upload.
     """
@@ -343,7 +377,7 @@ def summarize_document(text: str, filename: str) -> str | None:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=Config.OPENAI_MINI_MODEL,
             messages=[
                 {"role": "system", "content": _SUMMARIZE_PROMPT.format(filename=filename)},
                 {"role": "user", "content": truncated + indicator},
@@ -352,4 +386,5 @@ def summarize_document(text: str, filename: str) -> str | None:
         )
         return response.choices[0].message.content.strip()
     except Exception:
+        log.exception("summarize_document_failed filename=%s", filename)
         return None

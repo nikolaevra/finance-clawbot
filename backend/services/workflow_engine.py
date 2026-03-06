@@ -75,7 +75,8 @@ def start_workflow(
 
     log.info("Starting workflow run=%s template=%s user=%s trigger=%s", run["id"], template_id, user_id, trigger)
     from tasks.workflow_tasks import execute_workflow
-    execute_workflow.delay(run["id"])
+    async_result = execute_workflow.delay(run["id"])
+    log.info("workflow_enqueued run=%s task_id=%s", run["id"], async_result.id)
 
     return run
 
@@ -127,7 +128,8 @@ def resume_workflow(run_id: str, *, approve: bool = True, comment: str | None = 
     }).eq("id", run_id).execute()
 
     from tasks.workflow_tasks import execute_workflow
-    execute_workflow.delay(run_id)
+    async_result = execute_workflow.delay(run_id)
+    log.info("workflow_resumed_enqueued run=%s task_id=%s", run_id, async_result.id)
 
     run["status"] = "running"
     run["current_step_index"] = next_idx

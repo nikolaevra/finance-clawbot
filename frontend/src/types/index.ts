@@ -40,6 +40,16 @@ export interface ToolMeta {
   args: Record<string, unknown>;
 }
 
+export interface PendingToolApproval {
+  conversationId: string;
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    label: string;
+    args: Record<string, unknown>;
+  }>;
+}
+
 export interface StreamingMessage {
   role: "assistant";
   content: string;
@@ -47,6 +57,7 @@ export interface StreamingMessage {
   toolCalls: ToolCall[] | null;
   sources: SourceReference[] | null;
   isStreaming: boolean;
+  pendingApproval: PendingToolApproval | null;
 }
 
 // ── Memory types ─────────────────────────────────────────────────────
@@ -96,40 +107,9 @@ export interface Integration {
   user_id: string;
   provider: IntegrationProvider;
   integration_name: string;
-  status: "active" | "syncing" | "error" | "disconnected";
-  last_sync_at: string | null;
-  last_sync_status: string | null;
+  status: "active" | "error" | "disconnected";
   created_at: string;
   updated_at: string;
-}
-
-export interface AccountingAccount {
-  id: string;
-  name: string;
-  description: string | null;
-  classification: string | null;
-  type: string | null;
-  current_balance: number | null;
-  currency: string;
-  status: string | null;
-}
-
-export interface AccountingTransaction {
-  id: string;
-  remote_id: string;
-  transaction_date: string | null;
-  number: string | null;
-  memo: string | null;
-  total_amount: number | null;
-  currency: string;
-  contact_name: string | null;
-  account_name: string | null;
-  transaction_type: string | null;
-  provider: string | null;
-  integration_name: string | null;
-  remote_created_at: string | null;
-  remote_updated_at: string | null;
-  created_at: string;
 }
 
 // ── Workflow types ──────────────────────────────────────────────────
@@ -188,6 +168,7 @@ export interface ToolCatalogEntry {
   label: string;
   description: string;
   category: string;
+  requires_approval: boolean;
 }
 
 // ── Activity types ─────────────────────────────────────────────────

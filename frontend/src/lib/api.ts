@@ -5,15 +5,40 @@ import type {
   MemoryAccessLogEntry,
   UserDocument,
   Integration,
-  AccountingTransaction,
   WorkflowTemplate,
   WorkflowRun,
   Skill,
   SkillContent,
   ToolCatalogEntry,
 } from "@/types";
+import { logger } from "./logger";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
+
+async function readErrorBody(res: Response): Promise<string | undefined> {
+  try {
+    const body = await res.json();
+    return body?.error || JSON.stringify(body).slice(0, 200);
+  } catch {
+    return undefined;
+  }
+}
+
+async function logApiFailure(
+  endpoint: string,
+  method: string,
+  res: Response
+): Promise<void> {
+  const requestId = res.headers.get("X-Request-ID") || undefined;
+  const errorBody = await readErrorBody(res);
+  logger.warn("api_request_failed", {
+    endpoint,
+    method,
+    status: res.status,
+    requestId,
+    errorBody,
+  });
+}
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const supabase = createClient();
@@ -34,7 +59,10 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 export async function fetchConversations(): Promise<Conversation[]> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/api/conversations`, { headers });
-  if (!res.ok) throw new Error("Failed to fetch conversations");
+  if (!res.ok) {
+    await logApiFailure("/api/conversations", "GET", res);
+    throw new Error("Failed to fetch conversations");
+  }
   return res.json();
 }
 
@@ -93,11 +121,65 @@ export async function sendMessage(
   message: string
 ): Promise<Response> {
   const headers = await getAuthHeaders();
-  return fetch(`${API_URL}/api/chat/${conversationId}`, {
+  const res = await fetch(`${API_URL}/api/chat/${conversationId}`, {
     method: "POST",
     headers,
     body: JSON.stringify({ message }),
   });
+  if (!res.ok) {
+    await logApiFailure(`/api/chat/${conversationId}`, "POST", res);
+  }
+  return res;
+}
+
+// ── Tool Approval API ────────────────────────────────────────────────
+
+export async function approveToolCalls(
+  conversationId: string,
+  toolCallIds: string[],
+  approved: boolean
+): Promise<Response> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/chat/${conversationId}/approve-tools`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ tool_call_ids: toolCallIds, approved }),
+  });
+  if (!res.ok) {
+    await logApiFailure(`/api/chat/${conversationId}/approve-tools`, "POST", res);
+  }
+  return res;
+}
+
+// ── Bootstrap File API ──────────────────────────────────────────────
+
+export async function fetchBootstrapFile(
+  filename: string
+): Promise<{ filename: string; content: string }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/memories/bootstrap/${encodeURIComponent(filename)}`,
+    { headers }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch ${filename}`);
+  return res.json();
+}
+
+export async function updateBootstrapFile(
+  filename: string,
+  content: string
+): Promise<{ filename: string; content: string }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/memories/bootstrap/${encodeURIComponent(filename)}`,
+    {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ content }),
+    }
+  );
+  if (!res.ok) throw new Error(`Failed to update ${filename}`);
+  return res.json();
 }
 
 // ── Memory API ───────────────────────────────────────────────────────
@@ -202,6 +284,7 @@ export async function uploadDocument(file: File): Promise<UserDocument> {
     body: formData,
   });
   if (!res.ok) {
+    await logApiFailure("/api/documents/upload", "POST", res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to upload document");
   }
@@ -225,15 +308,6 @@ export async function fetchDocumentContent(
     headers,
   });
   if (!res.ok) throw new Error("Failed to fetch document content");
-  return res.json();
-}
-
-// ── Transaction API ─────────────────────────────────────────────────
-
-export async function fetchTransactions(): Promise<AccountingTransaction[]> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/transactions`, { headers });
-  if (!res.ok) throw new Error("Failed to fetch transactions");
   return res.json();
 }
 
@@ -262,6 +336,7 @@ export async function createLinkToken(
     }),
   });
   if (!res.ok) {
+    await logApiFailure("/api/integrations/link-token", "POST", res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to create link token");
   }
@@ -284,23 +359,9 @@ export async function createIntegration(
     }),
   });
   if (!res.ok) {
+    await logApiFailure("/api/integrations", "POST", res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to create integration");
-  }
-  return res.json();
-}
-
-export async function syncIntegration(
-  id: string
-): Promise<{ status: string; accounts_synced: number; transactions_synced: number }> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/integrations/${id}/sync`, {
-    method: "POST",
-    headers,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to sync integration");
   }
   return res.json();
 }
@@ -322,6 +383,7 @@ export async function connectFloat(apiToken: string): Promise<Integration> {
     body: JSON.stringify({ api_token: apiToken }),
   });
   if (!res.ok) {
+    await logApiFailure("/api/integrations/float", "POST", res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to connect Float");
   }
@@ -335,6 +397,7 @@ export async function getGmailAuthUrl(): Promise<{ auth_url: string }> {
     headers,
   });
   if (!res.ok) {
+    await logApiFailure("/api/integrations/gmail/auth-url", "POST", res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to get Gmail auth URL");
   }
