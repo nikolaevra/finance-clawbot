@@ -74,18 +74,19 @@ This repo is deployed as two apps:
 Use one Railway project with multiple services, each connected to this repo:
 
 - `api` service
-  - Root directory: repository root
-  - Start command: `cd backend && gunicorn run:app --bind 0.0.0.0:${PORT:-5001} --workers ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-120}`
+  - Root directory: `backend`
+  - Uses `backend/railway.json`
+  - Set env var: `SERVICE_ROLE=api`
+  - In Railway service settings, set HTTP health check path to `/api/health`
 - `worker-beat` service
-  - Root directory: repository root
-  - Start command: `cd backend && celery -A celery_app.celery worker --beat --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${CELERY_CONCURRENCY:-2}`
+  - Root directory: `backend`
+  - Uses `backend/railway.json`
+  - Set env var: `SERVICE_ROLE=worker`
 - `redis` service
   - Use Railway Redis plugin and wire its URL into `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND`.
 
 Config files used by Railway:
-- `railway.json`
-- `nixpacks.toml`
-- `Procfile` (process command reference)
+- `backend/railway.json` (shared deploy config with role-based start command)
 
 ### Vercel frontend
 
@@ -106,6 +107,7 @@ Backend (Railway):
 - `CELERY_RESULT_BACKEND` (Railway Redis URL, usually `/1`)
 - `MERGE_API_KEY` (if using accounting integrations)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (if using Gmail)
+- `SERVICE_ROLE` (`api` on API service, `worker` on worker-beat service)
 - Optional: `LOG_LEVEL`, `ENVIRONMENT`
 
 Frontend (Vercel):
