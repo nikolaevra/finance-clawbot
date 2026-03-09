@@ -84,7 +84,9 @@ describe("MessageList", () => {
     expect(screen.queryByTestId("bubble-assistant-tools")).not.toBeInTheDocument();
     expect(screen.getByTestId("bubble-tool-message")).toHaveTextContent("memory_search");
     expect(screen.getByTestId("bubble-assistant-reply")).toHaveTextContent("external/report");
-    expect(screen.getByText("Today")).toBeInTheDocument();
+    expect(
+      screen.getByText(formatDayLabel(new Date(assistantWithToolCall.created_at)))
+    ).toBeInTheDocument();
   });
 
   it("renders pending approval cards", () => {
