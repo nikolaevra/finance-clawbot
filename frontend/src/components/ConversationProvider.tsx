@@ -22,8 +22,8 @@ interface ConversationContextValue {
   activeConversation: Conversation | null;
   isSidebarOpen: boolean;
   isMobileSidebarOpen: boolean;
-  setActiveConversationId: (id: string) => void;
-  createChat: () => Promise<void>;
+  setActiveConversationId: (id: string | null) => void;
+  createChat: () => Promise<string | null>;
   deleteChat: (id: string) => Promise<void>;
   refreshConversations: () => Promise<Conversation[]>;
   updateConversationTitle: (id: string, title: string) => void;
@@ -65,7 +65,7 @@ export default function ConversationProvider({
     }
   }, []);
 
-  // Initial load: fetch conversations, select most recent or create one
+  // Initial load: fetch conversations, select most recent when available.
   useEffect(() => {
     if (initialized) return;
     let cancelled = false;
@@ -74,18 +74,7 @@ export default function ConversationProvider({
       const convos = await refreshConversations();
       if (cancelled) return;
 
-      if (convos.length > 0) {
-        setActiveConversationId(convos[0].id);
-      } else {
-        try {
-          const newConv = await createConversation("New Chat");
-          if (cancelled) return;
-          setConversations([newConv]);
-          setActiveConversationId(newConv.id);
-        } catch {
-          // will retry on next interaction
-        }
-      }
+      if (convos.length > 0) setActiveConversationId(convos[0].id);
       setInitialized(true);
     }
 
@@ -122,8 +111,10 @@ export default function ConversationProvider({
       const newConv = await createConversation("New Chat");
       setConversations((prev) => [newConv, ...prev]);
       setActiveConversationId(newConv.id);
+      return newConv.id;
     } catch {
       // handled by error boundaries or retry
+      return null;
     }
   }, []);
 
@@ -138,11 +129,8 @@ export default function ConversationProvider({
             if (remaining.length > 0) {
               setActiveConversationId(remaining[0].id);
             } else {
-              // Create a new chat since we deleted the last one
-              createConversation("New Chat").then((newConv) => {
-                setConversations([newConv]);
-                setActiveConversationId(newConv.id);
-              });
+              setActiveConversationId(null);
+              setActiveConversation(null);
             }
           }
 

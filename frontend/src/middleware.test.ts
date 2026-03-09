@@ -43,7 +43,7 @@ describe("middleware", () => {
         getAll: () => [],
         set: vi.fn(),
       },
-    } as any;
+    } as unknown as Parameters<typeof middleware>[0];
   }
 
   it("redirects unauthenticated chat requests to login", async () => {
@@ -53,10 +53,10 @@ describe("middleware", () => {
     expect(res.url.pathname).toBe("/login");
   });
 
-  it("redirects authenticated login requests to chat", async () => {
+  it("redirects authenticated login requests to home", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
     const res = await middleware(makeRequest("/login"));
     expect(res.kind).toBe("redirect");
-    expect(res.url.pathname).toBe("/chat");
+    expect(res.url.pathname).toBe("/");
   });
 });

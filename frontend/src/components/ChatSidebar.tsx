@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   Trash2,
@@ -76,11 +77,13 @@ function ConversationList({
     deleteChat,
     toggleSidebar,
   } = useConversations();
+  const router = useRouter();
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const handleSelect = (id: string) => {
     setActiveConversationId(id);
+    router.push(`/chat/${id}`);
     onSelectMobile?.();
   };
 
@@ -92,7 +95,10 @@ function ConversationList({
   };
 
   const handleCreate = async () => {
-    await createChat();
+    const newConversationId = await createChat();
+    if (newConversationId) {
+      router.push(`/chat/${newConversationId}`);
+    }
     onSelectMobile?.();
   };
 

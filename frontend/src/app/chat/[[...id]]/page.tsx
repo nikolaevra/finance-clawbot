@@ -1,13 +1,24 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChatArea from "@/components/ChatArea";
 import { useChat } from "@/lib/hooks/useChat";
 import { useConversations } from "@/components/ConversationProvider";
 
 export default function ChatPage() {
-  const { activeConversationId, activeConversation, updateConversationTitle } =
-    useConversations();
+  const {
+    activeConversationId,
+    activeConversation,
+    setActiveConversationId,
+    updateConversationTitle,
+  } = useConversations();
+  const params = useParams<{ id?: string[] }>();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const autoSentRef = useRef<string | null>(null);
+  const routeConversationId = params?.id?.[0] ?? null;
+  const queryPrompt = (searchParams.get("q") || "").trim();
 
   const {
     messages,
@@ -38,6 +49,34 @@ export default function ChatPage() {
       setMessages([]);
     }
   }, [activeConversation, setMessages]);
+
+  // Keep provider state in sync with route state for /chat/<conversationId>.
+  useEffect(() => {
+    if (!routeConversationId) return;
+    if (activeConversationId === routeConversationId) return;
+    setActiveConversationId(routeConversationId);
+  }, [routeConversationId, activeConversationId, setActiveConversationId]);
+
+  // Auto-send initial prompt from /chat/<id>?q=... once, then normalize URL.
+  useEffect(() => {
+    if (!routeConversationId || !queryPrompt) return;
+    if (activeConversationId !== routeConversationId) return;
+    if (isLoading) return;
+
+    const promptKey = `${routeConversationId}:${queryPrompt}`;
+    if (autoSentRef.current === promptKey) return;
+
+    autoSentRef.current = promptKey;
+    void send(queryPrompt);
+    router.replace(`/chat/${routeConversationId}`);
+  }, [
+    routeConversationId,
+    queryPrompt,
+    activeConversationId,
+    isLoading,
+    send,
+    router,
+  ]);
 
   const handleSend = useCallback(
     (message: string) => {

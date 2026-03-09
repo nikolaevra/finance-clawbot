@@ -113,12 +113,10 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function FloatKeyDialog({
-  open,
   onClose,
   onSubmit,
   submitting,
 }: {
-  open: boolean;
   onClose: () => void;
   onSubmit: (key: string) => void;
   submitting: boolean;
@@ -128,14 +126,9 @@ function FloatKeyDialog({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) {
-      setKey("");
-      setShowKey(false);
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [open]);
-
-  if (!open) return null;
+    const timer = setTimeout(() => inputRef.current?.focus(), 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -166,7 +159,7 @@ function FloatKeyDialog({
           />
           <button
             type="button"
-            onClick={() => setShowKey(!showKey)}
+            onClick={() => setShowKey((prev) => !prev)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground/25 hover:text-foreground/50"
           >
             {showKey ? <EyeOff size={14} strokeWidth={1.5} /> : <Eye size={14} strokeWidth={1.5} />}
@@ -556,15 +549,16 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      <FloatKeyDialog
-        open={floatDialogOpen}
-        onClose={() => {
-          setFloatDialogOpen(false);
-          setConnectingSlug(null);
-        }}
-        onSubmit={handleConnectFloat}
-        submitting={floatSubmitting}
-      />
+      {floatDialogOpen && (
+        <FloatKeyDialog
+          onClose={() => {
+            setFloatDialogOpen(false);
+            setConnectingSlug(null);
+          }}
+          onSubmit={handleConnectFloat}
+          submitting={floatSubmitting}
+        />
+      )}
     </div>
   );
 }

@@ -9,7 +9,6 @@ import { useState } from "react";
 import Link from "next/link";
 import type { Message, StreamingMessage, ToolMeta, SourceReference } from "@/types";
 import ThinkingIndicator from "./ThinkingIndicator";
-import { WorkflowApprovalCard, WorkflowStatusBadge } from "./WorkflowApproval";
 import SourcesCitation, {
   sourceLabel,
   sourceHref,
@@ -195,6 +194,11 @@ export default function MessageBubble({
 
   if (isTool) {
     const isDocumentTool = toolMeta && DOCUMENT_TOOLS.has(toolMeta.name);
+    const isWorkflowTool = toolMeta && WORKFLOW_TOOLS.has(toolMeta.name);
+
+    if (isWorkflowTool) {
+      return null;
+    }
 
     if (isDocumentTool) {
       const sourceFiles = getToolSourceFiles(toolMeta, content);
@@ -250,75 +254,6 @@ export default function MessageBubble({
         "text-foreground/30",
         preview
       );
-    }
-
-    if (toolMeta && WORKFLOW_TOOLS.has(toolMeta.name)) {
-      let parsed: Record<string, unknown> = {};
-      try { parsed = JSON.parse(content); } catch {}
-
-      const runId = parsed.run_id as string | undefined;
-      const status = parsed.status as string | undefined;
-      const workflowName = parsed.workflow as string | undefined;
-
-      if (toolMeta.name === "workflow_run" && runId) {
-        return renderCollapsibleToolResult(
-          "Workflow Started",
-          <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3 text-xs text-foreground/60">
-            <p>{parsed.message as string}</p>
-          </div>,
-          status ? <WorkflowStatusBadge status={status as "pending" | "running"} /> : null,
-          "text-blue-400/70",
-          oneLine((parsed.message as string) || `status: ${status ?? "pending"}`)
-        );
-      }
-
-      if (toolMeta.name === "workflow_status" && runId) {
-        return renderCollapsibleToolResult(
-          `Workflow Status: ${workflowName}`,
-          typeof parsed.error === "string" && parsed.error ? (
-            <p className="text-xs text-red-400/80 ml-1">{parsed.error}</p>
-          ) : (
-            <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3 text-xs text-foreground/40">
-              No errors reported.
-            </div>
-          ),
-          status ? (
-            <WorkflowStatusBadge status={status as "running" | "completed" | "failed"} />
-          ) : null,
-          "text-blue-400/70",
-          typeof parsed.error === "string" && parsed.error
-            ? `error: ${oneLine(parsed.error, 60)}`
-            : `status: ${status ?? "unknown"}`
-        );
-      }
-
-      if (toolMeta.name === "workflow_approve" && runId) {
-        return renderCollapsibleToolResult(
-          (parsed.action as string) || "Workflow approval",
-          <p className="text-xs text-foreground/40 ml-1">{parsed.message as string}</p>,
-          undefined,
-          "text-emerald-400/70",
-          oneLine((parsed.message as string) || "approval processed")
-        );
-      }
-
-      if (toolMeta.name === "workflow_list") {
-        const workflows = (parsed.workflows || []) as Array<Record<string, unknown>>;
-        return renderCollapsibleToolResult(
-          `Available Workflows (${workflows.length})`,
-          <div className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] p-3 text-xs space-y-1">
-            {workflows.map((w) => (
-              <div key={w.name as string} className="flex items-center gap-2">
-                <span className="font-mono font-medium text-foreground/60">{w.name as string}</span>
-                {!!w.schedule && <span className="text-foreground/25 text-[10px]">(scheduled)</span>}
-              </div>
-            ))}
-          </div>,
-          undefined,
-          "text-blue-400/70",
-          `${workflows.length} workflow${workflows.length === 1 ? "" : "s"} available`
-        );
-      }
     }
 
     return renderCollapsibleToolResult(

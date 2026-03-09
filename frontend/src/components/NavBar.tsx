@@ -1,15 +1,23 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Brain, MessageSquare, FileText, Link2, LogOut, Workflow, Sparkles } from "lucide-react";
+import {
+  Brain,
+  House,
+  MessageSquare,
+  FileText,
+  Link2,
+  LogOut,
+  Sparkles,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import ThemeToggle from "./ThemeToggle";
 
 const NAV_ITEMS = [
+  { label: "Home", href: "/", icon: House },
   { label: "Chat", href: "/chat", icon: MessageSquare },
   { label: "Memories", href: "/chat/memories", icon: Brain },
   { label: "Documents", href: "/chat/documents", icon: FileText },
-  { label: "Workflows", href: "/chat/workflows", icon: Workflow },
   { label: "Skills", href: "/chat/skills", icon: Sparkles },
   { label: "Integrations", href: "/chat/integrations", icon: Link2 },
 ] as const;
@@ -26,13 +34,13 @@ export default function NavBar() {
   };
 
   const isActive = (href: string) => {
+    if (href === "/") return pathname === "/";
     if (href === "/chat") {
       return (
         pathname === "/chat" ||
         (pathname.startsWith("/chat/") &&
           !pathname.startsWith("/chat/memories") &&
           !pathname.startsWith("/chat/documents") &&
-          !pathname.startsWith("/chat/workflows") &&
           !pathname.startsWith("/chat/skills") &&
           !pathname.startsWith("/chat/integrations"))
       );

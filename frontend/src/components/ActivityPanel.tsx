@@ -26,6 +26,18 @@ import type { ActivityEvent, ApprovalPreviewItem } from "@/types";
 import { approveWorkflowRun, cancelWorkflowRun } from "@/lib/api";
 import { logger } from "@/lib/logger";
 
+const HIDDEN_ACTIVITY_TYPES = new Set([
+  "workflow_start",
+  "step_start",
+  "step_complete",
+  "step_failed",
+  "step_skipped",
+  "approval_gate",
+  "workflow_complete",
+  "workflow_failed",
+  "workflow_done",
+]);
+
 function formatTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString([], {
@@ -463,7 +475,7 @@ function RunCard({ run }: { run: TrackedRun }) {
   );
 }
 
-function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
+export function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
   const runs = useTrackedRuns(events);
   if (runs.length === 0) return null;
 
@@ -502,11 +514,9 @@ function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
 
 export function ActivityToggleButton() {
   const { togglePanel, isPanelOpen, events } = useActivity();
+  const visibleEvents = events.filter((e) => !HIDDEN_ACTIVITY_TYPES.has(e.type));
 
-  const hasRecentActivity =
-    events.length > 0 &&
-    Date.now() - new Date(events[events.length - 1].timestamp).getTime() <
-      30_000;
+  const hasRecentActivity = visibleEvents.length > 0;
 
   if (isPanelOpen) return null;
 
@@ -526,6 +536,10 @@ export function ActivityToggleButton() {
 
 export default function ActivityPanel() {
   const { events, isConnected, togglePanel, clearEvents } = useActivity();
+  const visibleEvents = useMemo(
+    () => events.filter((e) => !HIDDEN_ACTIVITY_TYPES.has(e.type)),
+    [events]
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottom = useRef(true);
 
@@ -533,7 +547,7 @@ export default function ActivityPanel() {
     if (isNearBottom.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [events]);
+  }, [visibleEvents]);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -558,7 +572,7 @@ export default function ActivityPanel() {
             {isConnected ? "Live" : "Reconnecting..."}
           </span>
           <div className="flex-1" />
-          {events.length > 0 && (
+          {visibleEvents.length > 0 && (
             <button
               onClick={clearEvents}
               className="flex items-center gap-1 text-[10px] text-foreground/40 hover:text-foreground/60"
@@ -580,14 +594,12 @@ export default function ActivityPanel() {
         </p>
       </div>
 
-      <WorkflowRunsSection events={events} />
-
       <div
         ref={scrollRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto"
       >
-        {events.length === 0 ? (
+        {visibleEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
             <Activity
               size={28}
@@ -603,24 +615,24 @@ export default function ActivityPanel() {
           </div>
         ) : (
           <div className="py-1">
-            {events.map((event, i) => (
+            {visibleEvents.map((event, i) => (
               <EventRow key={`${event.timestamp}-${i}`} event={event} />
             ))}
           </div>
         )}
       </div>
 
-      {events.length > 0 && (
+      {visibleEvents.length > 0 && (
         <div className="border-t border-foreground/[0.06] px-4 py-2 flex items-center justify-between text-[10px] text-foreground/45">
-          <span>{events.length} events</span>
+          <span>{visibleEvents.length} events</span>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1">
               <span className="h-1 w-1 rounded-full bg-blue-400/60" />
-              Gateway: {events.filter((e) => e.actor === "gateway").length}
+              Gateway: {visibleEvents.filter((e) => e.actor === "gateway").length}
             </span>
             <span className="inline-flex items-center gap-1">
               <span className="h-1 w-1 rounded-full bg-foreground/30" />
-              Lobster: {events.filter((e) => e.actor === "lobster").length}
+              Lobster: {visibleEvents.filter((e) => e.actor === "lobster").length}
             </span>
           </div>
         </div>

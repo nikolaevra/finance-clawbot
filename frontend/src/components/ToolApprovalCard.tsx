@@ -13,10 +13,16 @@ import {
   Reply,
   Tag,
   Receipt,
-  Play,
   Send,
 } from "lucide-react";
 import type { PendingToolApproval } from "@/types";
+
+const HIDDEN_TOOL_NAMES = new Set([
+  "workflow_run",
+  "workflow_status",
+  "workflow_approve",
+  "workflow_list",
+]);
 
 const TOOL_ICONS: Record<string, typeof Mail> = {
   gmail_send_message: Mail,
@@ -24,7 +30,6 @@ const TOOL_ICONS: Record<string, typeof Mail> = {
   gmail_forward_message: Forward,
   gmail_modify_labels: Tag,
   accounting_create_bill: Receipt,
-  workflow_run: Play,
 };
 
 const GMAIL_TOOLS = new Set([
@@ -36,7 +41,6 @@ const GMAIL_TOOLS = new Set([
 const ARG_DISPLAY_KEYS: Record<string, string[]> = {
   gmail_modify_labels: ["message_id", "add_label_ids"],
   accounting_create_bill: ["vendor_id", "line_items"],
-  workflow_run: ["workflow_name"],
 };
 
 function GmailPreview({ tc }: { tc: PendingToolApproval["toolCalls"][number] }) {
@@ -129,6 +133,10 @@ export function ToolApprovalCard({
     setStatus(approved ? "approved" : "rejected");
   };
 
+  const visibleToolCalls = approval.toolCalls.filter(
+    (tc) => !HIDDEN_TOOL_NAMES.has(tc.name)
+  );
+
   if (status === "approved") {
     return (
       <div className="mx-4 my-2 rounded-2xl bg-emerald-400/[0.06] ring-1 ring-emerald-400/10 p-4">
@@ -165,7 +173,13 @@ export function ToolApprovalCard({
       </div>
 
       <div className="space-y-2">
-        {approval.toolCalls.map((tc) => {
+        {visibleToolCalls.length === 0 ? (
+          <div className="rounded-xl bg-foreground/[0.03] ring-1 ring-foreground/[0.06] p-3.5">
+            <p className="text-xs text-foreground/50">
+              This action needs approval.
+            </p>
+          </div>
+        ) : visibleToolCalls.map((tc) => {
           if (GMAIL_TOOLS.has(tc.name)) {
             return <GmailPreview key={tc.id} tc={tc} />;
           }

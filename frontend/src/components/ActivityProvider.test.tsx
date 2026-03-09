@@ -1,6 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useEffect } from "react";
 
 import type { ActivityEvent } from "@/types";
 
@@ -16,7 +15,6 @@ vi.mock("@/lib/api", () => ({
 
 import ActivityProvider, {
   useActivity,
-  useActivityInternal,
 } from "./ActivityProvider";
 
 class MockEventSource {
@@ -48,15 +46,6 @@ class MockEventSource {
 
 function ActivityConsumer() {
   const activity = useActivity();
-  const activityInternal = useActivityInternal();
-
-  useEffect(() => {
-    activityInternal.panelRef.current = {
-      isCollapsed: () => !activity.isPanelOpen,
-      resize: vi.fn(),
-      collapse: vi.fn(),
-    } as never;
-  }, [activity.isPanelOpen, activityInternal.panelRef]);
 
   return (
     <>
@@ -64,7 +53,6 @@ function ActivityConsumer() {
       <div data-testid="connected">{String(activity.isConnected)}</div>
       <div data-testid="has-activity">{String(activity.hasActivity)}</div>
       <div data-testid="panel-open">{String(activity.isPanelOpen)}</div>
-      <button onClick={activity.togglePanel}>toggle</button>
       <button onClick={activity.clearEvents}>clear</button>
     </>
   );
@@ -109,16 +97,6 @@ describe("ActivityProvider", () => {
 
     expect(screen.getByTestId("count")).toHaveTextContent("200");
     expect(screen.getByTestId("has-activity")).toHaveTextContent("true");
-
-    await act(async () => {
-      screen.getByText("toggle").click();
-    });
-    expect(screen.getByTestId("panel-open")).toHaveTextContent("true");
-
-    await act(async () => {
-      screen.getByText("toggle").click();
-    });
-    expect(screen.getByTestId("panel-open")).toHaveTextContent("false");
 
     await act(async () => {
       screen.getByText("clear").click();

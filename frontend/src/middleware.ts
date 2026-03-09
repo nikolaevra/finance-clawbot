@@ -14,7 +14,7 @@ export async function middleware(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) =>
-            request.cookies.set(name, value)
+            request.cookies.set(name, value, options)
           );
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
@@ -40,7 +40,7 @@ export async function middleware(request: NextRequest) {
   // Redirect authenticated users away from /login
   if (user && request.nextUrl.pathname === "/login") {
     const url = request.nextUrl.clone();
-    url.pathname = "/chat";
+    url.pathname = "/";
     return NextResponse.redirect(url);
   }
 
