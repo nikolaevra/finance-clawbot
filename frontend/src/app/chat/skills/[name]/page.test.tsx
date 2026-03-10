@@ -50,7 +50,9 @@ describe("Skill editor page", () => {
   it("inserts selected tool mention and saves content", async () => {
     render(<SkillEditorPage />);
 
-    const textarea = (await screen.findByPlaceholderText(/name: my-skill/i)) as HTMLTextAreaElement;
+    const textarea = (await screen.findByPlaceholderText(
+      /write automation instructions in plain text/i
+    )) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "Run @memory_" } });
     fireEvent.click((await screen.findAllByText("memory_read"))[0]);
 
@@ -63,7 +65,10 @@ describe("Skill editor page", () => {
     await waitFor(() =>
       expect(mocks.updateSkill).toHaveBeenCalledWith(
         "budget-skill",
-        expect.stringContaining("@memory_read")
+        expect.stringContaining("@memory_read"),
+        expect.objectContaining({
+          enabled: true,
+        })
       )
     );
   });
