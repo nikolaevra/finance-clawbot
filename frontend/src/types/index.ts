@@ -154,6 +154,15 @@ export interface Skill {
   name: string;
   description: string | null;
   enabled: boolean;
+  schedule_enabled?: boolean;
+  schedule_type?: "daily" | "weekly" | null;
+  schedule_days?: number[] | null;
+  schedule_time?: string | null;
+  schedule_timezone?: string | null;
+  trigger_enabled?: boolean;
+  trigger_provider?: "gmail" | null;
+  trigger_event?: "new_email" | null;
+  trigger_filters?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -161,6 +170,16 @@ export interface Skill {
 export interface SkillContent {
   name: string;
   content: string;
+  enabled?: boolean;
+  schedule_enabled?: boolean;
+  schedule_type?: "daily" | "weekly" | null;
+  schedule_days?: number[] | null;
+  schedule_time?: string | null;
+  schedule_timezone?: string | null;
+  trigger_enabled?: boolean;
+  trigger_provider?: "gmail" | null;
+  trigger_event?: "new_email" | null;
+  trigger_filters?: Record<string, unknown> | null;
 }
 
 export interface ToolCatalogEntry {

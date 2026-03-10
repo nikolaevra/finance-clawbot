@@ -18,7 +18,7 @@ const NAV_ITEMS = [
   { label: "Chat", href: "/chat", icon: MessageSquare },
   { label: "Memories", href: "/chat/memories", icon: Brain },
   { label: "Documents", href: "/chat/documents", icon: FileText },
-  { label: "Skills", href: "/chat/skills", icon: Sparkles },
+  { label: "Automations", href: "/chat/automations", icon: Sparkles },
   { label: "Integrations", href: "/chat/integrations", icon: Link2 },
 ] as const;
 
@@ -42,7 +42,14 @@ export default function NavBar() {
           !pathname.startsWith("/chat/memories") &&
           !pathname.startsWith("/chat/documents") &&
           !pathname.startsWith("/chat/skills") &&
+          !pathname.startsWith("/chat/automations") &&
           !pathname.startsWith("/chat/integrations"))
+      );
+    }
+    if (href === "/chat/automations") {
+      return (
+        pathname.startsWith("/chat/automations") ||
+        pathname.startsWith("/chat/skills")
       );
     }
     return pathname.startsWith(href);

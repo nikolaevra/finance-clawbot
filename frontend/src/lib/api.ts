@@ -556,13 +556,14 @@ export async function fetchSkill(name: string): Promise<SkillContent> {
 
 export async function createSkill(
   name: string,
-  content: string
+  content: string,
+  automation?: Partial<Skill>
 ): Promise<Skill> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/api/skills`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ name, content }),
+    body: JSON.stringify({ name, content, ...automation }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -573,7 +574,8 @@ export async function createSkill(
 
 export async function updateSkill(
   name: string,
-  content: string
+  content: string,
+  automation?: Partial<Skill>
 ): Promise<Skill> {
   const headers = await getAuthHeaders();
   const res = await fetch(
@@ -581,7 +583,7 @@ export async function updateSkill(
     {
       method: "PUT",
       headers,
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, ...automation }),
     }
   );
   if (!res.ok) {

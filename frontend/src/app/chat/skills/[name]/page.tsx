@@ -25,6 +25,16 @@ type ActiveMention = {
   query: string;
 };
 
+const WEEK_DAYS = [
+  { label: "Sun", value: 0 },
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+];
+
 export function getActiveMentionAtCursor(
   text: string,
   cursor: number
@@ -55,6 +65,18 @@ export default function SkillEditorPage() {
   const skillName = decodeURIComponent(params.name as string);
 
   const [content, setContent] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleType, setScheduleType] = useState<"daily" | "weekly">("daily");
+  const [scheduleDays, setScheduleDays] = useState<number[]>([1]);
+  const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [scheduleTimezone, setScheduleTimezone] = useState("UTC");
+  const [triggerEnabled, setTriggerEnabled] = useState(false);
+  const [triggerProvider, setTriggerProvider] = useState<"gmail">("gmail");
+  const [triggerEvent, setTriggerEvent] = useState<"new_email">("new_email");
+  const [gmailInboxOnly, setGmailInboxOnly] = useState(true);
+  const [gmailFromFilter, setGmailFromFilter] = useState("");
+  const [gmailSubjectFilter, setGmailSubjectFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -72,7 +94,34 @@ export default function SkillEditorPage() {
     async function load() {
       try {
         const data = await fetchSkill(skillName);
-        if (!cancelled) setContent(data.content);
+        if (!cancelled) {
+          setContent(data.content);
+          setEnabled(data.enabled ?? true);
+          setScheduleEnabled(Boolean(data.schedule_enabled));
+          setScheduleType(
+            data.schedule_type === "weekly" ? "weekly" : "daily"
+          );
+          setScheduleDays(
+            Array.isArray(data.schedule_days) && data.schedule_days.length > 0
+              ? data.schedule_days
+              : [1]
+          );
+          setScheduleTime(data.schedule_time || "09:00");
+          setScheduleTimezone(
+            data.schedule_timezone ||
+              Intl.DateTimeFormat().resolvedOptions().timeZone ||
+              "UTC"
+          );
+          setTriggerEnabled(Boolean(data.trigger_enabled));
+          setTriggerProvider(data.trigger_provider === "gmail" ? "gmail" : "gmail");
+          setTriggerEvent(data.trigger_event === "new_email" ? "new_email" : "new_email");
+          const filters = (data.trigger_filters || {}) as Record<string, unknown>;
+          setGmailInboxOnly(filters.inbox_only !== false);
+          setGmailFromFilter(typeof filters.from_contains === "string" ? filters.from_contains : "");
+          setGmailSubjectFilter(
+            typeof filters.subject_contains === "string" ? filters.subject_contains : ""
+          );
+        }
       } catch {
         if (!cancelled) setNotFound(true);
       } finally {
@@ -108,7 +157,25 @@ export default function SkillEditorPage() {
     setSaved(false);
     setError(null);
     try {
-      await updateSkill(skillName, content);
+      await updateSkill(skillName, content, {
+        enabled,
+        schedule_enabled: scheduleEnabled,
+        schedule_type: scheduleEnabled ? scheduleType : null,
+        schedule_days:
+          scheduleEnabled && scheduleType === "weekly" ? scheduleDays : null,
+        schedule_time: scheduleEnabled ? scheduleTime : null,
+        schedule_timezone: scheduleEnabled ? scheduleTimezone : null,
+        trigger_enabled: triggerEnabled,
+        trigger_provider: triggerEnabled ? triggerProvider : null,
+        trigger_event: triggerEnabled ? triggerEvent : null,
+        trigger_filters: triggerEnabled
+          ? {
+              inbox_only: gmailInboxOnly,
+              from_contains: gmailFromFilter.trim() || null,
+              subject_contains: gmailSubjectFilter.trim() || null,
+            }
+          : null,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -116,7 +183,22 @@ export default function SkillEditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [skillName, content]);
+  }, [
+    skillName,
+    content,
+    enabled,
+    scheduleEnabled,
+    scheduleType,
+    scheduleDays,
+    scheduleTime,
+    scheduleTimezone,
+    triggerEnabled,
+    triggerProvider,
+    triggerEvent,
+    gmailInboxOnly,
+    gmailFromFilter,
+    gmailSubjectFilter,
+  ]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -271,6 +353,131 @@ export default function SkillEditorPage() {
         </div>
       </div>
 
+      <div className="border-b border-foreground/[0.06] px-4 py-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-4 text-xs">
+          <label className="flex items-center gap-2 text-foreground/70">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            Enabled
+          </label>
+          <label className="flex items-center gap-2 text-foreground/70">
+            <input
+              type="checkbox"
+              checked={scheduleEnabled}
+              onChange={(e) => setScheduleEnabled(e.target.checked)}
+            />
+            Run on schedule
+          </label>
+          <label className="flex items-center gap-2 text-foreground/70">
+            <input
+              type="checkbox"
+              checked={triggerEnabled}
+              onChange={(e) => setTriggerEnabled(e.target.checked)}
+            />
+            Run on trigger
+          </label>
+        </div>
+
+        {scheduleEnabled && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <select
+              value={scheduleType}
+              onChange={(e) => setScheduleType(e.target.value as "daily" | "weekly")}
+              className="rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+            <input
+              type="time"
+              value={scheduleTime}
+              onChange={(e) => setScheduleTime(e.target.value)}
+              className="rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            />
+            <input
+              type="text"
+              value={scheduleTimezone}
+              onChange={(e) => setScheduleTimezone(e.target.value)}
+              placeholder="America/New_York"
+              className="w-48 rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            />
+            {scheduleType === "weekly" && (
+              <div className="flex items-center gap-1">
+                {WEEK_DAYS.map((d) => {
+                  const active = scheduleDays.includes(d.value);
+                  return (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() =>
+                        setScheduleDays((prev) => {
+                          if (prev.includes(d.value)) {
+                            const next = prev.filter((v) => v !== d.value);
+                            return next.length > 0 ? next : prev;
+                          }
+                          return [...prev, d.value].sort((a, b) => a - b);
+                        })
+                      }
+                      className={`rounded px-2 py-1 ring-1 ${
+                        active
+                          ? "bg-blue-400/15 text-blue-300 ring-blue-400/30"
+                          : "text-foreground/40 ring-foreground/[0.1]"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {triggerEnabled && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <select
+              value={triggerProvider}
+              onChange={(e) => setTriggerProvider(e.target.value as "gmail")}
+              className="rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            >
+              <option value="gmail">Gmail</option>
+            </select>
+            <select
+              value={triggerEvent}
+              onChange={(e) => setTriggerEvent(e.target.value as "new_email")}
+              className="rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            >
+              <option value="new_email">New inbox email</option>
+            </select>
+            <label className="flex items-center gap-2 text-foreground/60">
+              <input
+                type="checkbox"
+                checked={gmailInboxOnly}
+                onChange={(e) => setGmailInboxOnly(e.target.checked)}
+              />
+              Inbox only
+            </label>
+            <input
+              type="text"
+              value={gmailFromFilter}
+              onChange={(e) => setGmailFromFilter(e.target.value)}
+              placeholder="From contains (optional)"
+              className="w-48 rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            />
+            <input
+              type="text"
+              value={gmailSubjectFilter}
+              onChange={(e) => setGmailSubjectFilter(e.target.value)}
+              placeholder="Subject contains (optional)"
+              className="w-52 rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            />
+          </div>
+        )}
+      </div>
+
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-1 flex-col">
           <div className="relative flex-1 min-h-0">
@@ -321,7 +528,7 @@ export default function SkillEditorPage() {
               }
             }}
             className="h-full w-full resize-none bg-transparent p-5 font-mono text-sm text-foreground/70 outline-none placeholder:text-foreground/15 leading-relaxed"
-            placeholder="---\nname: my-skill\ndescription: What this skill does\nenabled: true\n---\n\n# Skill Instructions\n\n..."
+            placeholder="Write automation instructions in plain text. Include goals, required tools, and output format..."
             spellCheck={false}
           />
             {activeMention && filteredMentionTools.length > 0 && (

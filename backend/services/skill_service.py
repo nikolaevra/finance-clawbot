@@ -67,7 +67,12 @@ def list_skills(user_id: str) -> list[dict]:
     sb = get_supabase()
     result = (
         sb.table("skills")
-        .select("id, name, description, enabled, created_at, updated_at")
+        .select(
+            "id, name, description, enabled, "
+            "schedule_enabled, schedule_type, schedule_days, schedule_time, schedule_timezone, "
+            "trigger_enabled, trigger_provider, trigger_event, trigger_filters, "
+            "created_at, updated_at"
+        )
         .eq("user_id", user_id)
         .order("name")
         .execute()
@@ -86,15 +91,78 @@ def get_skill(user_id: str, skill_name: str) -> str | None:
         return None
 
 
-def save_skill(user_id: str, skill_name: str, content: str) -> dict:
+def get_skill_record(user_id: str, skill_name: str) -> dict | None:
+    """Return DB metadata row for a single skill."""
+    sb = get_supabase()
+    result = (
+        sb.table("skills")
+        .select(
+            "id, name, description, enabled, "
+            "schedule_enabled, schedule_type, schedule_days, schedule_time, schedule_timezone, "
+            "trigger_enabled, trigger_provider, trigger_event, trigger_filters, "
+            "created_at, updated_at"
+        )
+        .eq("user_id", user_id)
+        .eq("name", skill_name)
+        .single()
+        .execute()
+    )
+    return result.data if result and result.data else None
+
+
+def save_skill(
+    user_id: str,
+    skill_name: str,
+    content: str,
+    automation: dict[str, Any] | None = None,
+) -> dict:
     """Create or update a skill. Writes content to Storage and upserts metadata."""
     meta = _parse_frontmatter(content)
     description = meta.get("description", "")
-    enabled = meta.get("enabled", True)
+    existing = get_skill_record(user_id, skill_name) or {}
+    automation = automation or {}
+    enabled = bool(automation.get("enabled", meta.get("enabled", existing.get("enabled", True))))
+    schedule_enabled = bool(
+        automation.get("schedule_enabled", meta.get("schedule_enabled", existing.get("schedule_enabled", False)))
+    )
+    schedule_type = automation.get("schedule_type", meta.get("schedule_type", existing.get("schedule_type")))
+    schedule_days = automation.get("schedule_days", meta.get("schedule_days", existing.get("schedule_days")))
+    schedule_time = automation.get("schedule_time", meta.get("schedule_time", existing.get("schedule_time")))
+    schedule_timezone = automation.get(
+        "schedule_timezone", meta.get("schedule_timezone", existing.get("schedule_timezone"))
+    )
+    trigger_enabled = bool(
+        automation.get("trigger_enabled", meta.get("trigger_enabled", existing.get("trigger_enabled", False)))
+    )
+    trigger_provider = automation.get(
+        "trigger_provider", meta.get("trigger_provider", existing.get("trigger_provider"))
+    )
+    trigger_event = automation.get("trigger_event", meta.get("trigger_event", existing.get("trigger_event")))
+    trigger_filters = automation.get(
+        "trigger_filters",
+        meta.get("trigger_filters", existing.get("trigger_filters")),
+    )
 
     sb = get_supabase()
     path = _storage_path(user_id, skill_name)
     store = _storage()
+
+    # Keep frontmatter metadata aligned with DB automation config.
+    try:
+        post = frontmatter.loads(content)
+        post.metadata["enabled"] = enabled
+        post.metadata["schedule_enabled"] = schedule_enabled
+        post.metadata["schedule_type"] = schedule_type
+        post.metadata["schedule_days"] = schedule_days
+        post.metadata["schedule_time"] = schedule_time
+        post.metadata["schedule_timezone"] = schedule_timezone
+        post.metadata["trigger_enabled"] = trigger_enabled
+        post.metadata["trigger_provider"] = trigger_provider
+        post.metadata["trigger_event"] = trigger_event
+        post.metadata["trigger_filters"] = trigger_filters
+        content = frontmatter.dumps(post)
+    except Exception:
+        log.warning("Failed to sync automation metadata to SKILL.md frontmatter: %s", skill_name)
 
     content_bytes = content.encode("utf-8")
     try:
@@ -112,6 +180,15 @@ def save_skill(user_id: str, skill_name: str, content: str) -> dict:
         "name": skill_name,
         "description": description,
         "enabled": bool(enabled),
+        "schedule_enabled": schedule_enabled,
+        "schedule_type": schedule_type,
+        "schedule_days": schedule_days,
+        "schedule_time": schedule_time,
+        "schedule_timezone": schedule_timezone,
+        "trigger_enabled": trigger_enabled,
+        "trigger_provider": trigger_provider,
+        "trigger_event": trigger_event,
+        "trigger_filters": trigger_filters,
         "updated_at": now,
     }
     result = (

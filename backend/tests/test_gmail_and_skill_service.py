@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import services.gmail_service as gmail_service
 import services.skill_service as skill_service
+import routes.skills as skills_routes
 
 
 def test_extract_attachment_metadata_walks_nested_parts():
@@ -41,8 +42,20 @@ def test_skill_frontmatter_and_prompt_loading(monkeypatch, fake_supabase):
         "user-1",
         "budgeting",
         "---\ndescription: Budget helper\nenabled: true\n---\n# Skill",
+        {
+            "schedule_enabled": True,
+            "schedule_type": "daily",
+            "schedule_time": "08:00",
+            "schedule_timezone": "UTC",
+            "trigger_enabled": True,
+            "trigger_provider": "gmail",
+            "trigger_event": "new_email",
+            "trigger_filters": {"inbox_only": True},
+        },
     )
     assert saved["name"] == "budgeting"
+    assert saved["schedule_enabled"] is True
+    assert saved["trigger_enabled"] is True
 
     prompt = skill_service.load_skills_for_prompt("user-1")
     assert "<skills>" in (prompt or "")
@@ -51,3 +64,39 @@ def test_skill_frontmatter_and_prompt_loading(monkeypatch, fake_supabase):
     toggled = skill_service.toggle_skill("user-1", "budgeting", False)
     assert toggled is not None
     assert toggled["enabled"] is False
+
+
+def test_automation_validation_accepts_weekly_and_gmail_trigger():
+    payload = {
+        "enabled": True,
+        "schedule_enabled": True,
+        "schedule_type": "weekly",
+        "schedule_days": [1, 3, 5],
+        "schedule_time": "09:15",
+        "schedule_timezone": "America/New_York",
+        "trigger_enabled": True,
+        "trigger_provider": "gmail",
+        "trigger_event": "new_email",
+        "trigger_filters": {
+            "inbox_only": True,
+            "from_contains": "billing@",
+            "subject_contains": "invoice",
+        },
+    }
+    out, err = skills_routes._validate_automation(payload)
+    assert err is None
+    assert out["schedule_enabled"] is True
+    assert out["trigger_enabled"] is True
+
+
+def test_automation_validation_rejects_bad_time():
+    out, err = skills_routes._validate_automation(
+        {
+            "schedule_enabled": True,
+            "schedule_type": "daily",
+            "schedule_time": "25:99",
+            "schedule_timezone": "UTC",
+        }
+    )
+    assert out == {}
+    assert "schedule_time" in (err or "")

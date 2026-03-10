@@ -14,6 +14,15 @@ beat_schedule = {
         "task": "tasks.memory_tasks.consolidate_all_users",
         "schedule": crontab(minute=0, hour=0),
     },
+    # Gmail watch expires periodically (~7 days), so refresh twice daily.
+    "refresh-gmail-watches": {
+        "task": "tasks.gmail_watch_tasks.refresh_all_gmail_watches",
+        "schedule": crontab(minute=0, hour="*/12"),
+    },
+    "scan-scheduled-automations": {
+        "task": "tasks.skill_automation_tasks.scan_scheduled_automations",
+        "schedule": crontab(minute="*"),
+    },
 }
 
 log.info("beat_schedule_loaded jobs=%s", ",".join(sorted(beat_schedule.keys())))

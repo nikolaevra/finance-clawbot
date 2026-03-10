@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import base64
+from typing import Any
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import parseaddr
@@ -87,6 +88,112 @@ def _build_service(credentials_json: str):
         creds.valid, creds.expired, creds.scopes,
     )
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def get_profile(credentials_json: str) -> dict[str, str]:
+    """Return Gmail profile basics used for webhook routing."""
+    service = _build_service(credentials_json)
+    profile = service.users().getProfile(userId="me").execute()
+    return {
+        "emailAddress": profile.get("emailAddress", ""),
+        "historyId": str(profile.get("historyId", "")),
+    }
+
+
+def register_inbox_watch(credentials_json: str, topic_name: str) -> dict[str, str]:
+    """Register Gmail push watch for inbox changes.
+
+    Returns ``historyId`` and ``expiration`` from Gmail API response.
+    """
+    if not topic_name:
+        raise ValueError("topic_name is required for Gmail watch registration")
+
+    service = _build_service(credentials_json)
+    response = (
+        service.users()
+        .watch(
+            userId="me",
+            body={
+                "topicName": topic_name,
+                "labelIds": ["INBOX"],
+                "labelFilterAction": "include",
+            },
+        )
+        .execute()
+    )
+    return {
+        "historyId": str(response.get("historyId", "")),
+        "expiration": str(response.get("expiration", "")),
+    }
+
+
+def list_new_inbox_messages_since(
+    credentials_json: str,
+    start_history_id: str | None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Return new inbox message summaries since a history cursor."""
+    service = _build_service(credentials_json)
+
+    if not start_history_id:
+        profile = get_profile(credentials_json)
+        return [], profile.get("historyId")
+
+    try:
+        history_resp = (
+            service.users()
+            .history()
+            .list(
+                userId="me",
+                startHistoryId=start_history_id,
+                historyTypes=["messageAdded"],
+            )
+            .execute()
+        )
+    except Exception:
+        # Cursor can expire; caller can re-seed from latest profile historyId.
+        profile = get_profile(credentials_json)
+        return [], profile.get("historyId")
+
+    seen_ids: set[str] = set()
+    events: list[dict[str, Any]] = []
+    for row in history_resp.get("history", []):
+        for added in row.get("messagesAdded", []) or []:
+            msg = added.get("message") or {}
+            msg_id = msg.get("id")
+            if not msg_id or msg_id in seen_ids:
+                continue
+            seen_ids.add(msg_id)
+            full = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=msg_id,
+                    format="metadata",
+                    metadataHeaders=["Subject", "From", "Date"],
+                )
+                .execute()
+            )
+            headers = {
+                h["name"].lower(): h["value"]
+                for h in full.get("payload", {}).get("headers", [])
+            }
+            labels = full.get("labelIds", []) or []
+            events.append(
+                {
+                    "message_id": msg_id,
+                    "thread_id": full.get("threadId"),
+                    "subject": headers.get("subject", ""),
+                    "from": headers.get("from", ""),
+                    "date": headers.get("date", ""),
+                    "snippet": full.get("snippet", ""),
+                    "label_ids": labels,
+                    "is_inbox": "INBOX" in labels,
+                }
+            )
+
+    latest_history_id = str(history_resp.get("historyId") or start_history_id)
+    return events, latest_history_id
 
 
 def fetch_emails(credentials_json: str, max_results: int = 100, since: str | None = None) -> list[dict]:

@@ -108,10 +108,10 @@ export default function SkillsPage() {
         </div>
         <div className="flex-1">
           <h1 className="text-lg font-semibold text-foreground/85 tracking-tight">
-            Skills
+            Automations
           </h1>
           <p className="text-xs text-foreground/30">
-            User-defined capabilities the AI can activate
+            Plain-text automation instructions with optional schedule and triggers
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -127,7 +127,7 @@ export default function SkillsPage() {
             className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-blue-400 shadow-sm shadow-blue-500/20"
           >
             <Plus size={12} strokeWidth={1.5} />
-            New Skill
+            New Automation
           </button>
         </div>
       </div>
@@ -135,7 +135,7 @@ export default function SkillsPage() {
       {showNewForm && (
         <div className="mb-5 rounded-2xl bg-blue-400/[0.04] ring-1 ring-blue-400/10 p-5">
           <h3 className="text-sm font-medium text-foreground/75 mb-3">
-            Create New Skill
+            Create New Automation
           </h3>
           <div className="flex items-center gap-2">
             <input
@@ -189,7 +189,7 @@ export default function SkillsPage() {
               No skills created yet
             </p>
             <p className="text-xs text-foreground/20 mt-1">
-              Skills are markdown files that teach the AI new capabilities
+              Automations are markdown instructions the AI can run manually, on schedule, or on triggers
             </p>
           </div>
         ) : (
@@ -213,6 +213,16 @@ export default function SkillsPage() {
                     >
                       {skill.enabled ? "Active" : "Disabled"}
                     </span>
+                    {skill.schedule_enabled && (
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-blue-400/10 text-blue-400/80">
+                        Scheduled
+                      </span>
+                    )}
+                    {skill.trigger_enabled && (
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-400/10 text-violet-400/80">
+                        Triggered
+                      </span>
+                    )}
                   </div>
                   {skill.description && (
                     <p className="text-xs text-foreground/35 mt-1.5">

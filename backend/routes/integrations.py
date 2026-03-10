@@ -8,16 +8,21 @@ Endpoints:
   POST   /integrations/float          – connect Float via API key
   POST   /integrations/gmail/auth-url – get Google OAuth URL
   GET    /integrations/gmail/callback – handle Google OAuth redirect
+  POST   /integrations/gmail/webhook  – receive Gmail push events
   DELETE /integrations/<id>           – disconnect integration
 """
 from __future__ import annotations
 
 import logging
+import json
+import base64
+import hmac
 from flask import Blueprint, request, g, jsonify, redirect
 from middleware.auth import require_auth
 
 log = logging.getLogger(__name__)
 from services.supabase_service import get_supabase
+from config import Config
 from services.merge_service import (
     create_link_token,
     exchange_public_token,
@@ -167,8 +172,7 @@ def gmail_auth_url():
 def gmail_callback():
     """Handle the Google OAuth redirect.  No @require_auth because
     the user_id is passed via the ``state`` query parameter."""
-    from services.gmail_service import exchange_code
-    from config import Config
+    from services.gmail_service import exchange_code, get_profile
 
     code = request.args.get("code")
     state = request.args.get("state")
@@ -180,6 +184,7 @@ def gmail_callback():
 
     try:
         credentials_json = exchange_code(code)
+        profile = get_profile(credentials_json)
     except Exception as e:
         log.exception("gmail exchange_code failed user=%s", user_id)
         return jsonify({"error": f"OAuth exchange failed: {e}"}), 502
@@ -190,9 +195,11 @@ def gmail_callback():
         .insert({
             "user_id": user_id,
             "provider": "gmail",
-            "integration_name": "Gmail",
+            "integration_name": f"Gmail ({profile.get('emailAddress', '')})",
             "account_token": credentials_json,
             "status": "active",
+            "gmail_email": profile.get("emailAddress", ""),
+            "gmail_history_id": profile.get("historyId", ""),
         })
         .execute()
     )
@@ -200,6 +207,71 @@ def gmail_callback():
 
     frontend_url = Config.FRONTEND_URL
     return redirect(f"{frontend_url}/chat/integrations?gmail=connected")
+
+
+@integrations_bp.route("/integrations/gmail/webhook", methods=["POST"])
+def gmail_webhook():
+    """Receive Gmail push notifications and dispatch trigger automations."""
+    if Config.GMAIL_WEBHOOK_SECRET:
+        incoming = request.headers.get("X-Webhook-Secret", "")
+        if not hmac.compare_digest(incoming, Config.GMAIL_WEBHOOK_SECRET):
+            return jsonify({"error": "Unauthorized"}), 401
+
+    body = request.get_json(silent=True) or {}
+    data_b64 = ((body.get("message") or {}).get("data") or "").strip()
+    if not data_b64:
+        return jsonify({"status": "ignored", "reason": "no_data"}), 200
+
+    try:
+        decoded = base64.b64decode(data_b64).decode("utf-8")
+        payload = json.loads(decoded)
+    except Exception:
+        return jsonify({"status": "ignored", "reason": "invalid_payload"}), 200
+
+    email = payload.get("emailAddress")
+    if not email:
+        return jsonify({"status": "ignored", "reason": "missing_email"}), 200
+
+    sb = get_supabase()
+    integration = (
+        sb.table("integrations")
+        .select("id, user_id, account_token, gmail_history_id, gmail_email")
+        .eq("provider", "gmail")
+        .eq("status", "active")
+        .eq("gmail_email", email)
+        .limit(1)
+        .execute()
+    )
+    if not integration.data:
+        return jsonify({"status": "ignored", "reason": "integration_not_found"}), 200
+    row = integration.data[0]
+
+    from services.gmail_service import list_new_inbox_messages_since
+    from services.automation_trigger_service import dispatch_trigger_event
+
+    events, latest_history_id = list_new_inbox_messages_since(
+        row["account_token"], row.get("gmail_history_id")
+    )
+    enqueued = 0
+    for event in events:
+        message_id = event.get("message_id")
+        if not message_id:
+            continue
+        dispatch = dispatch_trigger_event(
+            provider="gmail",
+            event="new_email",
+            event_id=f"gmail:{row['id']}:{message_id}",
+            payload=event,
+            user_id=row["user_id"],
+        )
+        enqueued += dispatch.get("enqueued", 0)
+
+    if latest_history_id:
+        sb.table("integrations").update(
+            {"gmail_history_id": latest_history_id}
+        ).eq("id", row["id"]).execute()
+
+    return jsonify({"status": "ok", "events": len(events), "enqueued": enqueued})
 
 
 # ── Disconnect integration ────────────────────────────────────

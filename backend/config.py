@@ -46,6 +46,8 @@ class Config:
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
     GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
     GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5001/api/integrations/gmail/callback')
+    GMAIL_WEBHOOK_SECRET = os.getenv('GMAIL_WEBHOOK_SECRET', '')
+    GMAIL_WATCH_TOPIC = os.getenv('GMAIL_WATCH_TOPIC', '')
 
     # Celery
     CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
