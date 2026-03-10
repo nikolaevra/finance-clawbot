@@ -1,0 +1,14 @@
+---
+description: Always run full tests after code changes and protect tests from unapproved edits
+alwaysApply: true
+---
+
+# Test Enforcement And Guardrails
+
+- After every completed code change, run the full project test suites before reporting done:
+  - Backend: `cd backend && ./venv/bin/python -m pytest -q`
+  - Frontend: `cd frontend && npm test`
+- If tests fail, fix production code first and rerun tests until green.
+- Never delete tests to make the suite pass.
+- Do not modify test files unless the user explicitly approves test edits in the current chat.
+- When test files were changed with approval, state that clearly in the final response.

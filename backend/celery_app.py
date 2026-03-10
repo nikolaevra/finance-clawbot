@@ -36,6 +36,7 @@ celery.conf.update(
         "tasks.memory_tasks",
         "tasks.skill_automation_tasks",
         "tasks.gmail_watch_tasks",
+        "tasks.email_sync_tasks",
     ],
 )
 

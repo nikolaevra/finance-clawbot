@@ -10,6 +10,9 @@ import type {
   Skill,
   SkillContent,
   ToolCatalogEntry,
+  InboxTab,
+  EmailThread,
+  EmailMessage,
 } from "@/types";
 import { logger } from "./logger";
 
@@ -400,6 +403,118 @@ export async function getGmailAuthUrl(): Promise<{ auth_url: string }> {
     await logApiFailure("/api/integrations/gmail/auth-url", "POST", res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to get Gmail auth URL");
+  }
+  return res.json();
+}
+
+// ── Inbox API ───────────────────────────────────────────────────────
+
+export async function fetchInboxThreads(
+  tab: InboxTab = "inbox",
+  page: number = 1,
+  limit: number = 25
+): Promise<{ threads: EmailThread[]; page: number; limit: number; has_more: boolean }> {
+  const headers = await getAuthHeaders();
+  const url = new URL(`${API_URL}/api/inbox/threads`);
+  url.searchParams.set("tab", tab);
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), { headers });
+  if (!res.ok) {
+    await logApiFailure("/api/inbox/threads", "GET", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to fetch inbox threads");
+  }
+  return res.json();
+}
+
+export async function fetchInboxThread(
+  threadId: string
+): Promise<{ thread: EmailThread; messages: EmailMessage[]; hydrate_enqueued: boolean }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/inbox/threads/${encodeURIComponent(threadId)}`, { headers });
+  if (!res.ok) {
+    await logApiFailure(`/api/inbox/threads/${threadId}`, "GET", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to fetch thread");
+  }
+  return res.json();
+}
+
+export async function sendInboxEmail(payload: {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+}): Promise<{ id: string; threadId: string; labelIds: string[] }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/inbox/send`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await logApiFailure("/api/inbox/send", "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to send email");
+  }
+  return res.json();
+}
+
+export async function replyInboxEmail(payload: {
+  message_id: string;
+  body: string;
+  cc?: string;
+}): Promise<{ id: string; threadId: string; labelIds: string[] }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/inbox/reply`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await logApiFailure("/api/inbox/reply", "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to send reply");
+  }
+  return res.json();
+}
+
+export async function forwardInboxEmail(payload: {
+  message_id: string;
+  to: string;
+  body?: string;
+  cc?: string;
+}): Promise<{ id: string; threadId: string; labelIds: string[] }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_URL}/api/inbox/forward`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await logApiFailure("/api/inbox/forward", "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to forward email");
+  }
+  return res.json();
+}
+
+export async function markInboxMessageRead(
+  messageId: string
+): Promise<{ status: string }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/inbox/messages/${encodeURIComponent(messageId)}/read`,
+    {
+      method: "POST",
+      headers,
+    }
+  );
+  if (!res.ok) {
+    await logApiFailure(`/api/inbox/messages/${messageId}/read`, "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to mark message read");
   }
   return res.json();
 }

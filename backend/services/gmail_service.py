@@ -252,6 +252,70 @@ def fetch_emails(credentials_json: str, max_results: int = 100, since: str | Non
     return emails
 
 
+def list_message_ids_page(
+    credentials_json: str,
+    query: str = "",
+    label_ids: list[str] | None = None,
+    max_results: int = 100,
+    page_token: str | None = None,
+) -> dict[str, Any]:
+    """Return one page of Gmail message IDs for mailbox sync jobs."""
+    service = _build_service(credentials_json)
+    max_results = min(max(max_results, 1), 500)
+
+    kwargs: dict[str, Any] = {"userId": "me", "maxResults": max_results}
+    if query:
+        kwargs["q"] = query
+    if label_ids:
+        kwargs["labelIds"] = label_ids
+    if page_token:
+        kwargs["pageToken"] = page_token
+
+    result = service.users().messages().list(**kwargs).execute()
+    return {
+        "message_ids": [m["id"] for m in result.get("messages", []) if m.get("id")],
+        "next_page_token": result.get("nextPageToken"),
+        "result_size_estimate": int(result.get("resultSizeEstimate", 0) or 0),
+    }
+
+
+def get_message_raw(
+    credentials_json: str,
+    message_id: str,
+    format: str = "metadata",
+    metadata_headers: list[str] | None = None,
+) -> dict[str, Any]:
+    """Fetch raw Gmail message payload with caller-selected format."""
+    service = _build_service(credentials_json)
+    kwargs: dict[str, Any] = {"userId": "me", "id": message_id, "format": format}
+    if metadata_headers:
+        kwargs["metadataHeaders"] = metadata_headers
+    return service.users().messages().get(**kwargs).execute()
+
+
+def list_history_page(
+    credentials_json: str,
+    start_history_id: str,
+    page_token: str | None = None,
+) -> dict[str, Any]:
+    """Return one page of Gmail history deltas from a checkpoint."""
+    service = _build_service(credentials_json)
+    kwargs: dict[str, Any] = {
+        "userId": "me",
+        "startHistoryId": start_history_id,
+        "historyTypes": ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"],
+    }
+    if page_token:
+        kwargs["pageToken"] = page_token
+
+    result = service.users().history().list(**kwargs).execute()
+    return {
+        "history": result.get("history", []) or [],
+        "next_page_token": result.get("nextPageToken"),
+        "history_id": str(result.get("historyId") or start_history_id),
+    }
+
+
 # ── list_messages ────────────────────────────────────────────────────
 
 

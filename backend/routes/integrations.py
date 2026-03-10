@@ -17,6 +17,7 @@ import logging
 import json
 import base64
 import hmac
+from datetime import datetime, timezone
 from flask import Blueprint, request, g, jsonify, redirect
 from middleware.auth import require_auth
 
@@ -203,7 +204,24 @@ def gmail_callback():
         })
         .execute()
     )
-    log.info("gmail_callback_success user=%s integration_id=%s", user_id, (result.data[0] if result.data else {}).get("id"))
+    integration_row = result.data[0] if result.data else {}
+    integration_id = integration_row.get("id")
+    if integration_id:
+        sb.table("gmail_sync_state").upsert(
+            {
+                "user_id": user_id,
+                "integration_id": integration_id,
+                "last_history_id": profile.get("historyId", ""),
+                "sync_cursor_status": "queued",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="integration_id",
+        ).execute()
+        from tasks.email_sync_tasks import kickoff_initial_gmail_sync
+
+        kickoff_initial_gmail_sync.delay(integration_id)
+
+    log.info("gmail_callback_success user=%s integration_id=%s", user_id, integration_id)
 
     frontend_url = Config.FRONTEND_URL
     return redirect(f"{frontend_url}/chat/integrations?gmail=connected")
@@ -248,6 +266,7 @@ def gmail_webhook():
 
     from services.gmail_service import list_new_inbox_messages_since
     from services.automation_trigger_service import dispatch_trigger_event
+    from tasks.email_sync_tasks import sync_gmail_history_delta
 
     events, latest_history_id = list_new_inbox_messages_since(
         row["account_token"], row.get("gmail_history_id")
@@ -271,7 +290,16 @@ def gmail_webhook():
             {"gmail_history_id": latest_history_id}
         ).eq("id", row["id"]).execute()
 
-    return jsonify({"status": "ok", "events": len(events), "enqueued": enqueued})
+    sync_gmail_history_delta.delay(row["id"])
+
+    return jsonify(
+        {
+            "status": "ok",
+            "events": len(events),
+            "enqueued": enqueued,
+            "sync_enqueued": True,
+        }
+    )
 
 
 # ── Disconnect integration ────────────────────────────────────

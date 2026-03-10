@@ -235,3 +235,35 @@ export interface WorkflowRun {
     steps?: WorkflowStepDef[];
   };
 }
+
+// ── Inbox types ─────────────────────────────────────────────────────
+
+export type InboxTab = "inbox" | "unread" | "sent" | "drafts";
+
+export interface EmailThread {
+  gmail_thread_id: string;
+  subject_normalized: string;
+  participants_json: Array<{ name: string; email: string }>;
+  last_message_internal_at: string | null;
+  has_unread: boolean;
+  snippet: string;
+}
+
+export interface EmailMessage {
+  id: string;
+  gmail_message_id: string;
+  gmail_thread_id: string;
+  subject: string;
+  snippet: string;
+  body_text: string;
+  body_html_sanitized: string;
+  internal_date_ts: number | null;
+  from_json: { name: string; email: string };
+  to_json: Array<{ name: string; email: string }>;
+  cc_json: Array<{ name: string; email: string }>;
+  bcc_json: Array<{ name: string; email: string }>;
+  is_read: boolean;
+  is_sent: boolean;
+  is_draft: boolean;
+  label_ids_json: string[];
+}

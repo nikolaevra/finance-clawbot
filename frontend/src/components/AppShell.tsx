@@ -23,6 +23,7 @@ const NON_CHAT_PREFIXES = [
   "/chat/memories",
   "/chat/documents",
   "/chat/skills",
+  "/chat/inbox",
   "/chat/integrations",
 ];
 

@@ -19,6 +19,10 @@ beat_schedule = {
         "task": "tasks.gmail_watch_tasks.refresh_all_gmail_watches",
         "schedule": crontab(minute=0, hour="*/12"),
     },
+    "sync-gmail-history-deltas": {
+        "task": "tasks.email_sync_tasks.sync_all_gmail_history_deltas",
+        "schedule": crontab(minute="*/5"),
+    },
     "scan-scheduled-automations": {
         "task": "tasks.skill_automation_tasks.scan_scheduled_automations",
         "schedule": crontab(minute="*"),

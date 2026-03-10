@@ -9,6 +9,7 @@ import {
   Link2,
   LogOut,
   Sparkles,
+  Inbox,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import ThemeToggle from "./ThemeToggle";
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { label: "Memories", href: "/chat/memories", icon: Brain },
   { label: "Documents", href: "/chat/documents", icon: FileText },
   { label: "Automations", href: "/chat/automations", icon: Sparkles },
+  { label: "Inbox", href: "/chat/inbox", icon: Inbox },
   { label: "Integrations", href: "/chat/integrations", icon: Link2 },
 ] as const;
 
@@ -43,6 +45,7 @@ export default function NavBar() {
           !pathname.startsWith("/chat/documents") &&
           !pathname.startsWith("/chat/skills") &&
           !pathname.startsWith("/chat/automations") &&
+          !pathname.startsWith("/chat/inbox") &&
           !pathname.startsWith("/chat/integrations"))
       );
     }
