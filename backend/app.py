@@ -43,12 +43,19 @@ def create_app() -> Flask:
         if request.path == "/api/health":
             return response
         elapsed = (time.monotonic() - getattr(g, "req_start", 0)) * 1000
-        log.info(
+        status = int(response.status_code)
+        level = logging.INFO
+        if status >= 500:
+            level = logging.ERROR
+        elif status >= 400:
+            level = logging.WARNING
+        log.log(
+            level,
             "request_end id=%s method=%s path=%s status=%s duration_ms=%.0f user=%s",
             request_id,
             request.method,
             request.path,
-            response.status_code,
+            status,
             elapsed,
             getattr(g, "user_id", "-"),
         )

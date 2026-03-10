@@ -191,10 +191,14 @@ def get_skill_record(user_id: str, skill_name: str) -> dict | None:
         )
         .eq("user_id", user_id)
         .eq("name", skill_name)
-        .single()
+        .limit(1)
         .execute()
     )
-    return result.data if result and result.data else None
+    if not result or not result.data:
+        return None
+    if isinstance(result.data, list):
+        return result.data[0] if result.data else None
+    return result.data
 
 
 def save_skill(

@@ -13,7 +13,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from celery import Celery
+from celery.signals import setup_logging as celery_setup_logging
 from config import Config
+from logging_config import setup_logging
 
 celery = Celery("finance_clawbot")
 
@@ -61,6 +63,12 @@ class FlaskTask(celery.Task):
 
 
 celery.Task = FlaskTask
+
+
+@celery_setup_logging.connect
+def _configure_celery_logging(*args, **kwargs):
+    """Force Celery/beat logs through the shared app logging config."""
+    setup_logging()
 
 
 @celery.on_after_configure.connect

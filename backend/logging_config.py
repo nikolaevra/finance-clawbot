@@ -34,7 +34,15 @@ def setup_logging(level: int | None = None) -> None:
 
     # Railway marks stderr output as error logs. Redirect logger stream handlers
     # to stdout so INFO/WARNING lines are not misclassified.
-    for logger_name in ("", "gunicorn.error", "gunicorn.access", "celery"):
+    for logger_name in (
+        "",
+        "gunicorn.error",
+        "gunicorn.access",
+        "celery",
+        "celery.beat",
+        "celery.worker",
+        "celery.redirected",
+    ):
         logger = logging.getLogger(logger_name)
         for handler in logger.handlers:
             if (
