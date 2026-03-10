@@ -10,7 +10,7 @@ import {
   Send,
   RefreshCw,
 } from "lucide-react";
-import type { EmailMessage, EmailThread, InboxTab } from "@/types";
+import type { EmailAttachment, EmailMessage, EmailThread, InboxTab } from "@/types";
 import {
   fetchInboxThread,
   fetchInboxThreads,
@@ -24,6 +24,8 @@ type ComposerMode = "new" | "reply" | "forward";
 
 const TABS: Array<{ id: InboxTab; label: string }> = [
   { id: "inbox", label: "Inbox" },
+  { id: "all_mail", label: "All Mail" },
+  { id: "skip_inbox", label: "Skip Inbox" },
   { id: "unread", label: "Unread" },
   { id: "sent", label: "Sent" },
   { id: "drafts", label: "Drafts" },
@@ -36,11 +38,22 @@ function formatTime(value: string | null): string {
   return date.toLocaleString();
 }
 
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
 export default function InboxPage() {
   const [activeTab, setActiveTab] = useState<InboxTab>("inbox");
   const [threads, setThreads] = useState<EmailThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<EmailMessage[]>([]);
+  const [attachmentsByMessage, setAttachmentsByMessage] = useState<Record<string, EmailAttachment[]>>(
+    {}
+  );
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +82,7 @@ export default function InboxPage() {
       if ((data.threads || []).length === 0) {
         setSelectedThreadId(null);
         setMessages([]);
+        setAttachmentsByMessage({});
       } else if (!selectedThreadId || !(data.threads || []).some((t) => t.gmail_thread_id === selectedThreadId)) {
         setSelectedThreadId(data.threads[0].gmail_thread_id);
       }
@@ -86,6 +100,7 @@ export default function InboxPage() {
     try {
       const data = await fetchInboxThread(selectedThreadId);
       setMessages(data.messages || []);
+      setAttachmentsByMessage(data.attachments_by_message || {});
 
       const unreadIds = (data.messages || [])
         .filter((m) => !m.is_read)
@@ -314,9 +329,34 @@ export default function InboxPage() {
                   <p className="text-xs text-foreground/50 mt-1">
                     To: {(message.to_json || []).map((r) => r.email).join(", ")}
                   </p>
-                  <p className="text-xs text-foreground/60 mt-3 whitespace-pre-wrap">
-                    {message.body_text || message.snippet || "(No content)"}
-                  </p>
+                  {(message.cc_json || []).length > 0 && (
+                    <p className="text-xs text-foreground/50 mt-1">
+                      Cc: {(message.cc_json || []).map((r) => r.email).join(", ")}
+                    </p>
+                  )}
+                  {message.body_html_sanitized ? (
+                    <div
+                      className="mt-3 text-sm text-foreground/75 leading-6 overflow-x-auto [&_a]:text-blue-400 [&_a]:underline [&_blockquote]:border-l [&_blockquote]:border-foreground/20 [&_blockquote]:pl-3 [&_img]:max-w-full [&_img]:h-auto [&_pre]:whitespace-pre-wrap [&_table]:w-full [&_td]:align-top [&_th]:align-top"
+                      dangerouslySetInnerHTML={{ __html: message.body_html_sanitized }}
+                    />
+                  ) : (
+                    <p className="text-xs text-foreground/60 mt-3 whitespace-pre-wrap">
+                      {message.body_text || message.snippet || "(No content)"}
+                    </p>
+                  )}
+                  {(attachmentsByMessage[message.gmail_message_id] || []).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(attachmentsByMessage[message.gmail_message_id] || []).map((attachment) => (
+                        <div
+                          key={`${attachment.gmail_attachment_id}-${attachment.filename}`}
+                          className="rounded-lg bg-foreground/[0.05] px-2.5 py-1.5 text-[11px] text-foreground/70"
+                          title={attachment.mime_type}
+                        >
+                          {attachment.filename} · {formatBytes(attachment.size_bytes)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </article>
               ))
             )}

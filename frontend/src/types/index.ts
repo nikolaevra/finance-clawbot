@@ -238,7 +238,7 @@ export interface WorkflowRun {
 
 // ── Inbox types ─────────────────────────────────────────────────────
 
-export type InboxTab = "inbox" | "unread" | "sent" | "drafts";
+export type InboxTab = "inbox" | "all_mail" | "skip_inbox" | "unread" | "sent" | "drafts";
 
 export interface EmailThread {
   gmail_thread_id: string;
@@ -266,4 +266,13 @@ export interface EmailMessage {
   is_sent: boolean;
   is_draft: boolean;
   label_ids_json: string[];
+}
+
+export interface EmailAttachment {
+  gmail_message_id: string;
+  gmail_attachment_id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  storage_key: string | null;
 }

@@ -1,6 +1,7 @@
 """Celery tasks for Gmail inbox storage sync."""
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from datetime import datetime, timezone
@@ -63,35 +64,64 @@ def _parse_recipients(value: str) -> list[dict[str, str]]:
 def _sanitize_html(html: str) -> str:
     if not html:
         return ""
-    no_script = re.sub(r"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>", "", html, flags=re.I)
-    no_iframe = re.sub(r"<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>", "", no_script, flags=re.I)
-    return no_iframe[:100000]
+    sanitized = html
+    sanitized = re.sub(r"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>", "", sanitized, flags=re.I)
+    sanitized = re.sub(r"<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>", "", sanitized, flags=re.I)
+    sanitized = re.sub(r"<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>", "", sanitized, flags=re.I)
+    sanitized = re.sub(r"<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>", "", sanitized, flags=re.I)
+    sanitized = re.sub(r"\s+on[a-z]+\s*=\s*\"[^\"]*\"", "", sanitized, flags=re.I)
+    sanitized = re.sub(r"\s+on[a-z]+\s*=\s*'[^']*'", "", sanitized, flags=re.I)
+    sanitized = re.sub(r"\s+on[a-z]+\s*=\s*[^\s>]+", "", sanitized, flags=re.I)
+    sanitized = re.sub(
+        r"(href|src)\s*=\s*\"javascript:[^\"]*\"",
+        r'\1="#"',
+        sanitized,
+        flags=re.I,
+    )
+    sanitized = re.sub(
+        r"(href|src)\s*=\s*'javascript:[^']*'",
+        r"\1='#'",
+        sanitized,
+        flags=re.I,
+    )
+    return sanitized[:100000]
 
 
 def _extract_body(payload: dict[str, Any]) -> tuple[str, str]:
-    body_text = ""
-    body_html = ""
+    html_candidates: list[tuple[int, int, str]] = []
+    text_candidates: list[tuple[int, int, str]] = []
 
-    def _walk(part: dict[str, Any]) -> None:
-        nonlocal body_text, body_html
+    def _decode_part_data(raw_data: str | None) -> str:
+        if not raw_data:
+            return ""
+        try:
+            return base64.urlsafe_b64decode(raw_data).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    def _walk(part: dict[str, Any], *, depth: int, in_alternative: bool) -> None:
         mime_type = (part.get("mimeType") or "").lower()
         body = part.get("body") or {}
-        data = body.get("data")
-        if data:
-            import base64
+        decoded = _decode_part_data(body.get("data"))
+        rank = 0 if in_alternative else 1
+        if decoded and mime_type == "text/html":
+            html_candidates.append((rank, depth, decoded))
+        if decoded and mime_type == "text/plain":
+            text_candidates.append((rank, depth, decoded))
 
-            try:
-                decoded = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                if mime_type == "text/plain" and not body_text:
-                    body_text = decoded
-                if mime_type == "text/html" and not body_html:
-                    body_html = decoded
-            except Exception:
-                pass
+        next_is_alternative = mime_type.startswith("multipart/alternative")
         for child in part.get("parts") or []:
-            _walk(child)
+            _walk(
+                child,
+                depth=depth + 1,
+                in_alternative=next_is_alternative or in_alternative,
+            )
 
-    _walk(payload or {})
+    _walk(payload or {}, depth=0, in_alternative=False)
+    html_candidates.sort(key=lambda item: (item[0], item[1]))
+    text_candidates.sort(key=lambda item: (item[0], item[1]))
+    body_html = html_candidates[0][2] if html_candidates else ""
+    body_text = text_candidates[0][2] if text_candidates else ""
     return body_text[:100000], _sanitize_html(body_html)
 
 
@@ -355,7 +385,7 @@ def kickoff_initial_gmail_sync(integration_id: str) -> dict[str, Any]:
                     if internal_ts:
                         days_old = (datetime.now(timezone.utc).timestamp() * 1000 - internal_ts) / (1000 * 60 * 60 * 24)
                         is_recent = days_old <= 60
-                    if "UNREAD" in labels or "STARRED" in labels or is_recent:
+                    if "UNREAD" in labels or "STARRED" in labels or "INBOX" in labels or is_recent:
                         hydrated_candidates.append(msg_id)
                 except Exception:
                     errors += 1
@@ -463,6 +493,7 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
 
     added_or_changed: set[str] = set()
     deleted_ids: set[str] = set()
+    hydrated_candidates: set[str] = set()
     latest_history_id = start_history_id
     page_token: str | None = None
     try:
@@ -498,6 +529,14 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
                 metadata_headers=METADATA_HEADERS,
             )
             _upsert_message(sb, user_id, integration_id, msg, hydrate_body=False)
+            labels = msg.get("labelIds") or []
+            internal_ts = int(msg.get("internalDate") or 0) if str(msg.get("internalDate") or "").isdigit() else 0
+            is_recent = False
+            if internal_ts:
+                days_old = (datetime.now(timezone.utc).timestamp() * 1000 - internal_ts) / (1000 * 60 * 60 * 24)
+                is_recent = days_old <= 14
+            if "UNREAD" in labels or "STARRED" in labels or "INBOX" in labels or is_recent:
+                hydrated_candidates.add(msg_id)
 
         if deleted_ids:
             sb.table("emails").update(
@@ -516,12 +555,15 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
             last_delta_sync_at=_now_iso(),
             last_error=None,
         )
+        if hydrated_candidates:
+            hydrate_message_bodies.delay(integration_id, list(hydrated_candidates)[:500])
         return {
             "status": "ok",
             "integration_id": integration_id,
             "upserted": len(added_or_changed),
             "deleted": len(deleted_ids),
             "history_id": latest_history_id,
+            "hydration_enqueued": min(len(hydrated_candidates), 500),
         }
     except Exception as exc:
         _upsert_sync_state(

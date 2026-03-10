@@ -13,6 +13,7 @@ import type {
   InboxTab,
   EmailThread,
   EmailMessage,
+  EmailAttachment,
 } from "@/types";
 import { logger } from "./logger";
 
@@ -430,7 +431,12 @@ export async function fetchInboxThreads(
 
 export async function fetchInboxThread(
   threadId: string
-): Promise<{ thread: EmailThread; messages: EmailMessage[]; hydrate_enqueued: boolean }> {
+): Promise<{
+  thread: EmailThread;
+  messages: EmailMessage[];
+  attachments_by_message: Record<string, EmailAttachment[]>;
+  hydrate_enqueued: boolean;
+}> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/api/inbox/threads/${encodeURIComponent(threadId)}`, { headers });
   if (!res.ok) {
