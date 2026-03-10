@@ -173,18 +173,22 @@ def gmail_auth_url():
 def gmail_callback():
     """Handle the Google OAuth redirect.  No @require_auth because
     the user_id is passed via the ``state`` query parameter."""
-    from services.gmail_service import exchange_code, get_profile
+    from services.gmail_service import exchange_code, get_profile, parse_oauth_state
 
     code = request.args.get("code")
     state = request.args.get("state")
     if not code or not state:
         return jsonify({"error": "Missing code or state"}), 400
 
-    user_id = state
+    try:
+        user_id, code_verifier = parse_oauth_state(state)
+    except Exception as e:
+        log.warning("gmail_callback_invalid_state state=%s err=%s", state, e)
+        return jsonify({"error": "Invalid OAuth state"}), 400
     log.info("gmail_callback_start user=%s", user_id)
 
     try:
-        credentials_json = exchange_code(code)
+        credentials_json = exchange_code(code, code_verifier=code_verifier)
         profile = get_profile(credentials_json)
     except Exception as e:
         log.exception("gmail exchange_code failed user=%s", user_id)

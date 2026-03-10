@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import base64
+import hashlib
+import hmac
+import secrets
+import time
 from typing import Any
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -29,6 +33,69 @@ SCOPES = [
 ]
 
 
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}")
+
+
+def _state_secret() -> str:
+    # Reuse existing secret config; this should always be set in deployed envs.
+    return Config.GOOGLE_CLIENT_SECRET or "dev-oauth-state-secret"
+
+
+def build_oauth_state(user_id: str, code_verifier: str) -> str:
+    """Create a signed OAuth state payload carrying user and PKCE verifier."""
+    payload = {
+        "u": user_id,
+        "cv": code_verifier,
+        "ts": int(time.time()),
+    }
+    body = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    sig = hmac.new(
+        _state_secret().encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"v1.{body}.{sig}"
+
+
+def parse_oauth_state(state: str, max_age_seconds: int = 900) -> tuple[str, str | None]:
+    """Parse state and return (user_id, code_verifier).
+
+    Backward compatible with older plain-user-id state values.
+    """
+    if not state.startswith("v1."):
+        return state, None
+
+    parts = state.split(".")
+    if len(parts) != 3:
+        raise ValueError("Invalid OAuth state format")
+    _, body, supplied_sig = parts
+    expected_sig = hmac.new(
+        _state_secret().encode("utf-8"),
+        body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_sig, supplied_sig):
+        raise ValueError("Invalid OAuth state signature")
+
+    payload = json.loads(_b64url_decode(body).decode("utf-8"))
+    user_id = str(payload.get("u", "")).strip()
+    code_verifier = str(payload.get("cv", "")).strip()
+    ts = int(payload.get("ts", 0) or 0)
+    if not user_id:
+        raise ValueError("Missing user in OAuth state")
+    if not code_verifier:
+        raise ValueError("Missing code verifier in OAuth state")
+    if ts and int(time.time()) - ts > max_age_seconds:
+        raise ValueError("OAuth state expired")
+    return user_id, code_verifier
+
+
 def _client_config() -> dict:
     return {
         "web": {
@@ -46,21 +113,28 @@ def get_auth_url(user_id: str) -> str:
     so the callback can identify the user."""
     flow = Flow.from_client_config(_client_config(), scopes=SCOPES)
     flow.redirect_uri = Config.GOOGLE_REDIRECT_URI
+    code_verifier = secrets.token_urlsafe(64)
+    flow.code_verifier = code_verifier
     url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
-        state=user_id,
+        state=build_oauth_state(user_id, code_verifier),
+        code_challenge_method="S256",
     )
     return url
 
 
-def exchange_code(code: str) -> str:
+def exchange_code(code: str, code_verifier: str | None = None) -> str:
     """Exchange an authorization *code* for OAuth credentials.
     Returns a JSON string suitable for storage in the DB."""
     flow = Flow.from_client_config(_client_config(), scopes=SCOPES)
     flow.redirect_uri = Config.GOOGLE_REDIRECT_URI
-    flow.fetch_token(code=code)
+    if code_verifier:
+        flow.code_verifier = code_verifier
+        flow.fetch_token(code=code, code_verifier=code_verifier)
+    else:
+        flow.fetch_token(code=code)
     creds = flow.credentials
     return creds.to_json()
 

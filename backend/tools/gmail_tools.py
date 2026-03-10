@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from datetime import datetime, timezone
 
 from flask import g
 
@@ -18,16 +20,15 @@ from services import gmail_service
 log = logging.getLogger(__name__)
 
 
-def _get_gmail_credentials() -> str | None:
-    """Return the Gmail OAuth credentials JSON for the current user,
-    or None if no active Gmail integration exists."""
+def _get_gmail_integration() -> dict | None:
+    """Return the active Gmail integration row for the current user."""
     user_id = getattr(g, "user_id", None)
-    log.info("gmail creds lookup user=%s", user_id)
+    log.info("gmail integration lookup user=%s", user_id)
     try:
         sb = get_supabase()
         result = (
             sb.table("integrations")
-            .select("account_token")
+            .select("id, user_id, account_token, gmail_history_id")
             .eq("user_id", user_id)
             .eq("provider", "gmail")
             .eq("status", "active")
@@ -36,20 +37,30 @@ def _get_gmail_credentials() -> str | None:
             .execute()
         )
         if result.data:
-            token_json = result.data[0]["account_token"]
-            try:
-                info = json.loads(token_json)
-                scopes = info.get("scopes", info.get("scope", "N/A"))
-                log.info(
-                    "gmail creds found user=%s scopes=%s token_prefix=%s",
-                    user_id, scopes, token_json[:80],
-                )
-            except (json.JSONDecodeError, TypeError):
-                log.warning("gmail creds found but not valid JSON user=%s", user_id)
-            return token_json
+            return result.data[0]
         log.warning("no active gmail integration for user=%s", user_id)
     except Exception:
-        log.exception("gmail creds lookup failed user=%s", user_id)
+        log.exception("gmail integration lookup failed user=%s", user_id)
+    return None
+
+
+def _get_gmail_credentials() -> str | None:
+    """Return the Gmail OAuth credentials JSON for the current user,
+    or None if no active Gmail integration exists."""
+    user_id = getattr(g, "user_id", None)
+    row = _get_gmail_integration()
+    if row:
+        token_json = row["account_token"]
+        try:
+            info = json.loads(token_json)
+            scopes = info.get("scopes", info.get("scope", "N/A"))
+            log.info(
+                "gmail creds found user=%s scopes=%s token_prefix=%s",
+                user_id, scopes, token_json[:80],
+            )
+        except (json.JSONDecodeError, TypeError):
+            log.warning("gmail creds found but not valid JSON user=%s", user_id)
+        return token_json
     return None
 
 
@@ -73,6 +84,143 @@ _REAUTH_MSG = (
     "The user needs to disconnect and reconnect Gmail on the "
     "Integrations page to grant send/modify access."
 )
+
+
+def _enqueue_delta_sync(integration_id: str) -> bool:
+    try:
+        from tasks.email_sync_tasks import sync_gmail_history_delta
+
+        sync_gmail_history_delta.delay(integration_id)
+        return True
+    except Exception:
+        log.exception("gmail local refresh enqueue failed integration_id=%s", integration_id)
+        return False
+
+
+def _search_local_messages(
+    integration_id: str,
+    query: str,
+    label_ids: list[str] | None,
+    max_results: int,
+) -> list[dict]:
+    """Best-effort local cache query for Gmail list semantics."""
+    sb = get_supabase()
+    max_results = min(max(max_results, 1), 100)
+    rows = (
+        sb.table("emails")
+        .select("gmail_message_id, gmail_thread_id, snippet, subject, from_json, to_json, internal_date_ts, label_ids_json, is_read, is_sent, is_draft")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration_id)
+        .is_("deleted_at", "null")
+        .order("internal_date_ts", desc=True)
+        .limit(min(max_results * 10, 500))
+        .execute()
+    ).data or []
+
+    q = (query or "").strip().lower()
+
+    def _match(row: dict) -> bool:
+        labels = row.get("label_ids_json", []) or []
+        if label_ids and not all(label in labels for label in label_ids):
+            return False
+
+        if not q:
+            return True
+
+        if "is:unread" in q and row.get("is_read", True):
+            return False
+        if "in:sent" in q and not row.get("is_sent", False):
+            return False
+        if "in:draft" in q and not row.get("is_draft", False):
+            return False
+        if "in:inbox" in q and "INBOX" not in labels:
+            return False
+
+        from_match = re.search(r"from:([^\s]+)", q)
+        if from_match:
+            needle = from_match.group(1)
+            sender = ((row.get("from_json") or {}).get("email", "") or "").lower()
+            if needle not in sender:
+                return False
+
+        subject_match = re.search(r"subject:([^\s]+)", q)
+        if subject_match:
+            needle = subject_match.group(1)
+            subject = (row.get("subject", "") or "").lower()
+            if needle not in subject:
+                return False
+
+        residual = re.sub(r"(is:unread|in:sent|in:draft|in:inbox|from:[^\s]+|subject:[^\s]+)", "", q).strip()
+        if residual:
+            hay = f"{(row.get('subject', '') or '').lower()} {(row.get('snippet', '') or '').lower()}"
+            if residual not in hay:
+                return False
+        return True
+
+    filtered = [row for row in rows if _match(row)]
+    messages: list[dict] = []
+    for row in filtered[:max_results]:
+        sender = row.get("from_json") or {}
+        to_list = row.get("to_json") or []
+        from_email = sender.get("email", "") or ""
+        from_name = sender.get("name", "") or ""
+        from_value = f"{from_name} <{from_email}>".strip() if from_name else from_email
+        to_value = ", ".join([item.get("email", "") for item in to_list if item.get("email")])
+        date_value = ""
+        internal_ts = row.get("internal_date_ts")
+        if isinstance(internal_ts, int):
+            date_value = datetime.fromtimestamp(internal_ts / 1000, timezone.utc).isoformat()
+        messages.append(
+            {
+                "id": row.get("gmail_message_id"),
+                "threadId": row.get("gmail_thread_id"),
+                "snippet": row.get("snippet", ""),
+                "subject": row.get("subject", ""),
+                "from": from_value,
+                "to": to_value,
+                "date": date_value,
+                "labelIds": row.get("label_ids_json", []) or [],
+            }
+        )
+    return messages
+
+
+def _get_local_message(integration_id: str, message_id: str) -> dict | None:
+    sb = get_supabase()
+    rows = (
+        sb.table("emails")
+        .select("*")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration_id)
+        .eq("gmail_message_id", message_id)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    row = rows[0]
+    from_json = row.get("from_json") or {}
+    to_json = row.get("to_json") or []
+    cc_json = row.get("cc_json") or []
+    return {
+        "id": row.get("gmail_message_id"),
+        "threadId": row.get("gmail_thread_id"),
+        "subject": row.get("subject", ""),
+        "from": from_json.get("email", ""),
+        "from_address": from_json.get("email", ""),
+        "to": ", ".join([item.get("email", "") for item in to_json if item.get("email")]),
+        "cc": ", ".join([item.get("email", "") for item in cc_json if item.get("email")]),
+        "date": (
+            datetime.fromtimestamp(row["internal_date_ts"] / 1000, timezone.utc).isoformat()
+            if isinstance(row.get("internal_date_ts"), int)
+            else ""
+        ),
+        "snippet": row.get("snippet", ""),
+        "body_text": row.get("body_text", ""),
+        "labelIds": row.get("label_ids_json", []) or [],
+        "attachments": [],
+    }
 
 
 # ── gmail_list_messages ──────────────────────────────────────────────
@@ -110,6 +258,17 @@ _REAUTH_MSG = (
                 "type": "integer",
                 "description": "Maximum number of messages to return (1-100, default 20).",
             },
+            "source": {
+                "type": "string",
+                "description": (
+                    "Read source: 'auto' (default, local cache first with remote fallback), "
+                    "'local' (cache only), or 'remote' (Gmail API)."
+                ),
+            },
+            "refresh_local": {
+                "type": "boolean",
+                "description": "If true, enqueue a background delta sync before reading local cache.",
+            },
         },
         "required": [],
     },
@@ -118,13 +277,39 @@ def gmail_list_messages(
     query: str = "",
     label_ids: list[str] | None = None,
     max_results: int = 20,
+    source: str = "auto",
+    refresh_local: bool = False,
 ) -> dict:
-    log.info("gmail_list_messages called query=%r label_ids=%s max=%d", query, label_ids, max_results)
-    creds = _get_gmail_credentials()
-    if not creds:
+    log.info(
+        "gmail_list_messages called query=%r label_ids=%s max=%d source=%s refresh_local=%s",
+        query, label_ids, max_results, source, refresh_local
+    )
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_list_messages aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_list_messages"}
 
+    source = (source or "auto").lower()
+    sync_enqueued = _enqueue_delta_sync(integration["id"]) if refresh_local else False
+
+    if source in ("auto", "local"):
+        try:
+            messages = _search_local_messages(integration["id"], query, label_ids, max_results)
+            if source == "local" or messages:
+                return {
+                    "tool_used": "gmail_list_messages",
+                    "source": "Local cache",
+                    "query": query,
+                    "total_results": len(messages),
+                    "messages": messages,
+                    "sync_enqueued": sync_enqueued,
+                }
+        except Exception:
+            log.exception("gmail_list_messages local cache query failed")
+            if source == "local":
+                return {"error": "Local inbox cache query failed", "tool_used": "gmail_list_messages"}
+
+    creds = integration["account_token"]
     try:
         messages = gmail_service.list_messages(
             creds,
@@ -139,6 +324,7 @@ def gmail_list_messages(
             "query": query,
             "total_results": len(messages),
             "messages": messages,
+            "sync_enqueued": sync_enqueued,
         }
     except Exception as e:
         log.exception("gmail_list_messages failed")
@@ -164,17 +350,54 @@ def gmail_list_messages(
                 "type": "string",
                 "description": "The Gmail message ID to retrieve.",
             },
+            "source": {
+                "type": "string",
+                "description": (
+                    "Read source: 'auto' (default, local cache first with remote fallback), "
+                    "'local' (cache only), or 'remote' (Gmail API)."
+                ),
+            },
+            "refresh_local": {
+                "type": "boolean",
+                "description": "If true, enqueue a background delta sync before reading local cache.",
+            },
         },
         "required": ["message_id"],
     },
 )
-def gmail_get_message(message_id: str) -> dict:
-    log.info("gmail_get_message called id=%s", message_id)
-    creds = _get_gmail_credentials()
-    if not creds:
+def gmail_get_message(message_id: str, source: str = "auto", refresh_local: bool = False) -> dict:
+    log.info("gmail_get_message called id=%s source=%s refresh_local=%s", message_id, source, refresh_local)
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_get_message aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_get_message"}
 
+    source = (source or "auto").lower()
+    sync_enqueued = _enqueue_delta_sync(integration["id"]) if refresh_local else False
+
+    if source in ("auto", "local"):
+        try:
+            msg = _get_local_message(integration["id"], message_id)
+            if msg:
+                return {
+                    "tool_used": "gmail_get_message",
+                    "source": "Local cache",
+                    "message": msg,
+                    "sync_enqueued": sync_enqueued,
+                }
+            if source == "local":
+                return {
+                    "tool_used": "gmail_get_message",
+                    "source": "Local cache",
+                    "error": "Message not found in local cache yet. Try refresh_local=true or source='remote'.",
+                    "sync_enqueued": sync_enqueued,
+                }
+        except Exception:
+            log.exception("gmail_get_message local cache query failed id=%s", message_id)
+            if source == "local":
+                return {"error": "Local inbox cache query failed", "tool_used": "gmail_get_message"}
+
+    creds = integration["account_token"]
     try:
         msg = gmail_service.get_message(creds, message_id)
         log.info("gmail_get_message success id=%s subject=%r", message_id, msg.get("subject"))
@@ -182,10 +405,74 @@ def gmail_get_message(message_id: str) -> dict:
             "tool_used": "gmail_get_message",
             "source": "Gmail API",
             "message": msg,
+            "sync_enqueued": sync_enqueued,
         }
     except Exception as e:
         log.exception("gmail_get_message failed id=%s", message_id)
         return {"error": str(e), "tool_used": "gmail_get_message"}
+
+
+# ── gmail_refresh_local_emails ───────────────────────────────────────
+
+
+@tool_registry.register(
+    name="gmail_refresh_local_emails",
+    label="Refresh Local Gmail Cache",
+    category="gmail",
+    description=(
+        "Enqueue a background sync to refresh locally stored Gmail emails. "
+        "Use this to improve freshness before local cache reads."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "description": "Sync mode: 'delta' (default) or 'full' for initial-style backfill.",
+            },
+        },
+        "required": [],
+    },
+)
+def gmail_refresh_local_emails(mode: str = "delta") -> dict:
+    integration = _get_gmail_integration()
+    if not integration:
+        return {**_NO_GMAIL, "tool_used": "gmail_refresh_local_emails"}
+
+    mode = (mode or "delta").lower()
+    try:
+        if mode == "full":
+            from tasks.email_sync_tasks import kickoff_initial_gmail_sync
+
+            kickoff_initial_gmail_sync.delay(integration["id"])
+            task_name = "kickoff_initial_gmail_sync"
+        else:
+            from tasks.email_sync_tasks import sync_gmail_history_delta
+
+            sync_gmail_history_delta.delay(integration["id"])
+            task_name = "sync_gmail_history_delta"
+
+        sb = get_supabase()
+        state_rows = (
+            sb.table("gmail_sync_state")
+            .select("last_history_id, last_full_sync_at, last_delta_sync_at, sync_cursor_status, last_error")
+            .eq("integration_id", integration["id"])
+            .limit(1)
+            .execute()
+        ).data or []
+        state = state_rows[0] if state_rows else {}
+
+        return {
+            "tool_used": "gmail_refresh_local_emails",
+            "status": "queued",
+            "mode": mode,
+            "task": task_name,
+            "integration_id": integration["id"],
+            "sync_state": state,
+        }
+    except Exception as exc:
+        log.exception("gmail_refresh_local_emails failed integration_id=%s", integration["id"])
+        return {"error": str(exc), "tool_used": "gmail_refresh_local_emails"}
 
 
 # ── gmail_send_message ───────────────────────────────────────────────
