@@ -21,6 +21,7 @@ from email.utils import parseaddr
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from flask import g, has_request_context
 
 from config import Config
@@ -280,6 +281,7 @@ def list_new_inbox_messages_since(
 
     seen_ids: set[str] = set()
     events: list[dict[str, Any]] = []
+    skipped_missing = 0
     for row in history_resp.get("history", []):
         for added in row.get("messagesAdded", []) or []:
             msg = added.get("message") or {}
@@ -287,17 +289,29 @@ def list_new_inbox_messages_since(
             if not msg_id or msg_id in seen_ids:
                 continue
             seen_ids.add(msg_id)
-            full = (
-                service.users()
-                .messages()
-                .get(
-                    userId="me",
-                    id=msg_id,
-                    format="metadata",
-                    metadataHeaders=["Subject", "From", "Date"],
+            try:
+                full = (
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=msg_id,
+                        format="metadata",
+                        metadataHeaders=["Subject", "From", "Date"],
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+            except HttpError as exc:
+                status = getattr(getattr(exc, "resp", None), "status", None)
+                if status == 404:
+                    skipped_missing += 1
+                    log.info("gmail_history_message_missing id=%s status=404 (skipping)", msg_id)
+                    continue
+                log.warning("gmail_history_message_fetch_failed id=%s status=%s", msg_id, status, exc_info=True)
+                continue
+            except Exception:
+                log.warning("gmail_history_message_fetch_failed id=%s", msg_id, exc_info=True)
+                continue
             headers = {
                 h["name"].lower(): h["value"]
                 for h in full.get("payload", {}).get("headers", [])
@@ -321,7 +335,7 @@ def list_new_inbox_messages_since(
         operation="users.history.list + users.messages.get(metadata)",
         status="success",
         started=started,
-        details={"events": len(events)},
+        details={"events": len(events), "skipped_missing": skipped_missing},
     )
     return events, latest_history_id
 
