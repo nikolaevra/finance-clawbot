@@ -1,12 +1,20 @@
 """Inbox API routes backed by local Gmail sync tables."""
 from __future__ import annotations
 
+import io
 import logging
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, g, jsonify, request, send_file
 
 from middleware.auth import require_auth
-from services.gmail_service import forward_message, modify_labels, reply_message, send_message
+from services.document_service import ingest_document_upload
+from services.gmail_service import (
+    download_attachment,
+    forward_message,
+    modify_labels,
+    reply_message,
+    send_message,
+)
 from services.supabase_service import get_supabase
 from tasks.email_sync_tasks import hydrate_message_bodies, sync_gmail_history_delta
 
@@ -29,6 +37,29 @@ def _get_gmail_integration(user_id: str) -> dict | None:
     if not result.data:
         return None
     return result.data[0]
+
+
+def _get_attachment_row(
+    *,
+    user_id: str,
+    integration_id: str,
+    message_id: str,
+    attachment_id: str,
+) -> dict | None:
+    sb = get_supabase()
+    rows = (
+        sb.table("email_attachments")
+        .select("filename, mime_type, gmail_message_id, gmail_attachment_id")
+        .eq("user_id", user_id)
+        .eq("integration_id", integration_id)
+        .eq("gmail_message_id", message_id)
+        .eq("gmail_attachment_id", attachment_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    return rows[0]
 
 
 def _thread_ids_by_inbox_scope(
@@ -247,6 +278,105 @@ def get_thread(thread_id: str):
             "hydrate_enqueued": hydrate_enqueued,
         }
     )
+
+
+@inbox_bp.route("/inbox/messages/<message_id>/attachments/<attachment_id>/download", methods=["GET"])
+@require_auth
+def download_inbox_attachment(message_id: str, attachment_id: str):
+    integration = _get_gmail_integration(g.user_id)
+    if not integration:
+        return jsonify({"error": "Gmail integration not connected"}), 404
+
+    attachment = _get_attachment_row(
+        user_id=g.user_id,
+        integration_id=integration["id"],
+        message_id=message_id,
+        attachment_id=attachment_id,
+    )
+    if not attachment:
+        return jsonify({"error": "Attachment not found"}), 404
+
+    try:
+        file_bytes = download_attachment(
+            integration["account_token"],
+            message_id=message_id,
+            attachment_id=attachment_id,
+        )
+    except Exception:
+        log.exception(
+            "inbox_attachment_download_failed user=%s integration_id=%s message_id=%s attachment_id=%s",
+            g.user_id,
+            integration["id"],
+            message_id,
+            attachment_id,
+        )
+        return jsonify({"error": "Failed to download attachment"}), 502
+
+    filename = attachment.get("filename") or f"attachment-{attachment_id}"
+    mime_type = attachment.get("mime_type") or "application/octet-stream"
+    return send_file(
+        io.BytesIO(file_bytes),
+        mimetype=mime_type,
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@inbox_bp.route("/inbox/messages/<message_id>/attachments/<attachment_id>/save-to-documents", methods=["POST"])
+@require_auth
+def save_attachment_to_documents(message_id: str, attachment_id: str):
+    integration = _get_gmail_integration(g.user_id)
+    if not integration:
+        return jsonify({"error": "Gmail integration not connected"}), 404
+
+    attachment = _get_attachment_row(
+        user_id=g.user_id,
+        integration_id=integration["id"],
+        message_id=message_id,
+        attachment_id=attachment_id,
+    )
+    if not attachment:
+        return jsonify({"error": "Attachment not found"}), 404
+
+    try:
+        file_bytes = download_attachment(
+            integration["account_token"],
+            message_id=message_id,
+            attachment_id=attachment_id,
+        )
+    except Exception:
+        log.exception(
+            "inbox_attachment_download_failed_for_save user=%s integration_id=%s message_id=%s attachment_id=%s",
+            g.user_id,
+            integration["id"],
+            message_id,
+            attachment_id,
+        )
+        return jsonify({"error": "Failed to download attachment"}), 502
+
+    filename = attachment.get("filename") or f"attachment-{attachment_id}"
+    mime_type = attachment.get("mime_type") or "application/octet-stream"
+
+    try:
+        doc = ingest_document_upload(
+            user_id=g.user_id,
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type=mime_type,
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception:
+        log.exception(
+            "inbox_attachment_save_failed user=%s integration_id=%s message_id=%s attachment_id=%s",
+            g.user_id,
+            integration["id"],
+            message_id,
+            attachment_id,
+        )
+        return jsonify({"error": "Failed to save attachment to documents"}), 500
+
+    return jsonify(doc), 201
 
 
 @inbox_bp.route("/inbox/send", methods=["POST"])

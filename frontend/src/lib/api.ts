@@ -545,6 +545,50 @@ export async function archiveInboxThread(
   return res.json();
 }
 
+export async function downloadInboxAttachment(
+  messageId: string,
+  attachmentId: string
+): Promise<{ blob: Blob; filename: string }> {
+  const headers = await getAuthHeaders();
+  const endpoint = `/api/inbox/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/download`;
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    headers,
+  });
+  if (!res.ok) {
+    await logApiFailure(endpoint, "GET", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to download attachment");
+  }
+
+  const contentDisposition = res.headers.get("content-disposition") || "";
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const asciiMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+  const filename = utf8Match?.[1]
+    ? decodeURIComponent(utf8Match[1])
+    : (asciiMatch?.[1] || "attachment");
+
+  const blob = await res.blob();
+  return { blob, filename };
+}
+
+export async function saveInboxAttachmentToDocuments(
+  messageId: string,
+  attachmentId: string
+): Promise<UserDocument> {
+  const headers = await getAuthHeaders();
+  const endpoint = `/api/inbox/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/save-to-documents`;
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    method: "POST",
+    headers,
+  });
+  if (!res.ok) {
+    await logApiFailure(endpoint, "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to save attachment");
+  }
+  return res.json();
+}
+
 // ── Activity SSE ────────────────────────────────────────────────────
 
 export function getActivityStreamUrl(token: string): string {

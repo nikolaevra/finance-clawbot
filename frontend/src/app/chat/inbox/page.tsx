@@ -10,6 +10,9 @@ import {
   Forward,
   Send,
   RefreshCw,
+  Download,
+  FolderPlus,
+  Check,
 } from "lucide-react";
 import type { EmailAttachment, EmailMessage, EmailThread, InboxTab } from "@/types";
 import {
@@ -20,6 +23,8 @@ import {
   markInboxMessageRead,
   replyInboxEmail,
   sendInboxEmail,
+  downloadInboxAttachment,
+  saveInboxAttachmentToDocuments,
 } from "@/lib/api";
 
 type ComposerMode = "new" | "reply" | "forward";
@@ -128,6 +133,7 @@ export default function InboxPage() {
   const [sending, setSending] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [attachmentActions, setAttachmentActions] = useState<Record<string, "downloading" | "saving" | "saved">>({});
 
   const [composerMode, setComposerMode] = useState<ComposerMode | null>(null);
   const [composeTo, setComposeTo] = useState("");
@@ -289,6 +295,65 @@ export default function InboxPage() {
     }
   };
 
+  const runAttachmentAction = (
+    key: string,
+    action: "downloading" | "saving" | "saved" | null
+  ) => {
+    setAttachmentActions((prev) => {
+      const next = { ...prev };
+      if (action) {
+        next[key] = action;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const handleDownloadAttachment = async (
+    messageId: string,
+    attachment: EmailAttachment
+  ) => {
+    const key = `${messageId}:${attachment.gmail_attachment_id}`;
+    runAttachmentAction(key, "downloading");
+    setError(null);
+    try {
+      const { blob, filename } = await downloadInboxAttachment(
+        messageId,
+        attachment.gmail_attachment_id
+      );
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename || attachment.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download attachment");
+    } finally {
+      runAttachmentAction(key, null);
+    }
+  };
+
+  const handleSaveAttachment = async (
+    messageId: string,
+    attachment: EmailAttachment
+  ) => {
+    const key = `${messageId}:${attachment.gmail_attachment_id}`;
+    runAttachmentAction(key, "saving");
+    setError(null);
+    try {
+      await saveInboxAttachmentToDocuments(messageId, attachment.gmail_attachment_id);
+      runAttachmentAction(key, "saved");
+      window.setTimeout(() => runAttachmentAction(key, null), 1800);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save attachment");
+      runAttachmentAction(key, null);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 px-6 py-5 border-b border-foreground/[0.08]">
@@ -422,9 +487,19 @@ export default function InboxPage() {
                   className="rounded-2xl ring-1 ring-foreground/[0.08] bg-card p-4"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-foreground">
-                      {message.from_json?.name || message.from_json?.email || "Unknown sender"}
-                    </p>
+                    <div className="min-w-0">
+                      <p className="text-[11px] uppercase tracking-wide text-foreground/45">
+                        From
+                      </p>
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {message.from_json?.name || message.from_json?.email || "Unknown sender"}
+                      </p>
+                      {message.from_json?.email && (
+                        <p className="truncate text-xs font-mono text-foreground/65">
+                          {message.from_json.email}
+                        </p>
+                      )}
+                    </div>
                     <p className="text-xs text-foreground/50">
                       {message.internal_date_ts
                         ? new Date(message.internal_date_ts).toLocaleString()
@@ -453,14 +528,68 @@ export default function InboxPage() {
                     </p>
                   )}
                   {(attachmentsByMessage[message.gmail_message_id] || []).length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-col gap-2">
                       {(attachmentsByMessage[message.gmail_message_id] || []).map((attachment) => (
                         <div
                           key={`${attachment.gmail_attachment_id}-${attachment.filename}`}
-                          className="rounded-lg bg-foreground/[0.05] px-2.5 py-1.5 text-[11px] text-foreground/70"
+                          className="rounded-lg bg-foreground/[0.05] px-2.5 py-2 text-[11px] text-foreground/70"
                           title={attachment.mime_type}
                         >
-                          {attachment.filename} · {formatBytes(attachment.size_bytes)}
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="truncate">
+                              {attachment.filename} · {formatBytes(attachment.size_bytes)}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() =>
+                                  handleDownloadAttachment(message.gmail_message_id, attachment)
+                                }
+                                disabled={
+                                  attachmentActions[`${message.gmail_message_id}:${attachment.gmail_attachment_id}`] ===
+                                    "downloading" ||
+                                  attachmentActions[`${message.gmail_message_id}:${attachment.gmail_attachment_id}`] ===
+                                    "saving"
+                                }
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.06] disabled:opacity-50"
+                              >
+                                {attachmentActions[`${message.gmail_message_id}:${attachment.gmail_attachment_id}`] ===
+                                "downloading" ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : (
+                                  <Download size={11} />
+                                )}
+                                Download
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleSaveAttachment(message.gmail_message_id, attachment)
+                                }
+                                disabled={
+                                  attachmentActions[`${message.gmail_message_id}:${attachment.gmail_attachment_id}`] ===
+                                    "downloading" ||
+                                  attachmentActions[`${message.gmail_message_id}:${attachment.gmail_attachment_id}`] ===
+                                    "saving"
+                                }
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.06] disabled:opacity-50"
+                              >
+                                {attachmentActions[`${message.gmail_message_id}:${attachment.gmail_attachment_id}`] ===
+                                "saving" ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : attachmentActions[
+                                    `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                  ] === "saved" ? (
+                                  <Check size={11} />
+                                ) : (
+                                  <FolderPlus size={11} />
+                                )}
+                                {attachmentActions[
+                                  `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                ] === "saved"
+                                  ? "Saved"
+                                  : "Save to Documents"}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -485,6 +614,16 @@ export default function InboxPage() {
                     placeholder="To"
                     className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
                   />
+                )}
+                {composerMode === "reply" && (
+                  <div className="mb-2 rounded-xl bg-blue-500/[0.08] px-3 py-2 ring-1 ring-blue-400/20">
+                    <p className="text-[11px] uppercase tracking-wide text-blue-300/90">
+                      To (replying to sender)
+                    </p>
+                    <p className="text-sm font-medium text-foreground">
+                      {composeTo || "Unknown sender"}
+                    </p>
+                  </div>
                 )}
                 <input
                   value={composeCc}
