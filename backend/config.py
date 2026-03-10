@@ -12,11 +12,27 @@ def _require_env(key: str) -> str:
     return value
 
 
+def _as_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Config:
     # Flask
-    DEBUG = os.getenv('FLASK_ENV', 'development') == 'development'
-    ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
-    LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG')
+    FLASK_ENV = os.getenv("FLASK_ENV", "development").lower()
+    ENVIRONMENT = os.getenv("ENVIRONMENT", FLASK_ENV).lower()
+    IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
+
+    # FLASK_DEBUG always wins when explicitly set.
+    # Otherwise, disable debug whenever ENVIRONMENT is production-like.
+    _flask_debug_raw = os.getenv("FLASK_DEBUG")
+    DEBUG = (
+        _as_bool(_flask_debug_raw)
+        if _flask_debug_raw is not None
+        else (FLASK_ENV == "development" and not IS_PRODUCTION)
+    )
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG" if DEBUG else "INFO").upper()
 
     # Supabase
     SUPABASE_URL = os.getenv('SUPABASE_URL', '')

@@ -24,14 +24,24 @@ def _parse_level(raw: str) -> int:
 
 def setup_logging(level: int | None = None) -> None:
     root = logging.getLogger()
-    if root.handlers:
-        return
-
     effective_level = level if level is not None else _parse_level(Config.LOG_LEVEL)
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
-    root.addHandler(handler)
+
+    if not root.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+        root.addHandler(handler)
     root.setLevel(effective_level)
+
+    # Railway marks stderr output as error logs. Redirect logger stream handlers
+    # to stdout so INFO/WARNING lines are not misclassified.
+    for logger_name in ("", "gunicorn.error", "gunicorn.access", "celery"):
+        logger = logging.getLogger(logger_name)
+        for handler in logger.handlers:
+            if (
+                isinstance(handler, logging.StreamHandler)
+                and getattr(handler, "stream", None) is sys.stderr
+            ):
+                handler.stream = sys.stdout
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
