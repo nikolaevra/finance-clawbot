@@ -93,22 +93,31 @@ def categorize_transactions(user_id: str, input_data: dict | None = None) -> dic
     txn_text = json.dumps(transactions, default=str, indent=2)
 
     client = get_openai()
-    response = client.chat.completions.create(
-        model=Config.OPENAI_MINI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a financial analyst. For each transaction below, suggest a "
-                    "category and brief reason. Return a JSON array of objects with keys: "
-                    "transaction_id, suggested_category, reason. Only output valid JSON."
-                ),
-            },
-            {"role": "user", "content": txn_text},
-        ],
-        max_tokens=2000,
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=Config.OPENAI_MINI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a financial analyst. For each transaction below, suggest a "
+                        "category and brief reason. Return a JSON array of objects with keys: "
+                        "transaction_id, suggested_category, reason. Only output valid JSON."
+                    ),
+                },
+                {"role": "user", "content": txn_text},
+            ],
+            max_completion_tokens=2000,
+            response_format={"type": "json_object"},
+        )
+    except Exception:
+        log.exception(
+            "categorize_transactions_openai_failed user=%s model=%s limit=%s",
+            user_id,
+            Config.OPENAI_MINI_MODEL,
+            limit,
+        )
+        raise
 
     raw = response.choices[0].message.content.strip()
     try:
@@ -209,21 +218,32 @@ def generate_financial_summary(user_id: str, input_data: dict | None = None) -> 
     }, default=str, indent=2)
 
     client = get_openai()
-    response = client.chat.completions.create(
-        model=Config.OPENAI_MINI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a financial analyst. Given the accounts and recent transactions, "
-                    "produce a concise financial summary including: overview, key metrics, "
-                    "notable trends, and recommendations. Use markdown formatting."
-                ),
-            },
-            {"role": "user", "content": data_block},
-        ],
-        max_tokens=1500,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=Config.OPENAI_MINI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a financial analyst. Given the accounts and recent transactions, "
+                        "produce a concise financial summary including: overview, key metrics, "
+                        "notable trends, and recommendations. Use markdown formatting."
+                    ),
+                },
+                {"role": "user", "content": data_block},
+            ],
+            max_completion_tokens=1500,
+        )
+    except Exception:
+        log.exception(
+            "financial_summary_openai_failed user=%s model=%s days=%s accounts=%s txns=%s",
+            user_id,
+            Config.OPENAI_MINI_MODEL,
+            days,
+            len(accounts),
+            len(transactions),
+        )
+        raise
 
     report = response.choices[0].message.content.strip()
     return {"report": report, "period_days": days, "accounts_count": len(accounts), "transactions_count": len(transactions)}

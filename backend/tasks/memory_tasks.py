@@ -36,28 +36,38 @@ def consolidate_memories(user_id: str, input_data: dict | None = None) -> dict:
     existing_memory = get_long_term_memory(user_id) or ""
 
     client = get_openai()
-    response = client.chat.completions.create(
-        model=Config.OPENAI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a personal knowledge assistant. Given the user's recent daily "
-                    "notes and their existing long-term memory, produce a concise update to "
-                    "append to MEMORY.md. Focus on durable facts, decisions, preferences, "
-                    "and important context. Avoid ephemeral details. Use markdown bullet points."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"## Existing MEMORY.md\n{existing_memory[:3000]}\n\n"
-                    f"## Recent Daily Logs\n{combined[:6000]}"
-                ),
-            },
-        ],
-        max_tokens=800,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=Config.OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a personal knowledge assistant. Given the user's recent daily "
+                        "notes and their existing long-term memory, produce a concise update to "
+                        "append to MEMORY.md. Focus on durable facts, decisions, preferences, "
+                        "and important context. Avoid ephemeral details. Use markdown bullet points."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"## Existing MEMORY.md\n{existing_memory[:3000]}\n\n"
+                        f"## Recent Daily Logs\n{combined[:6000]}"
+                    ),
+                },
+            ],
+            max_completion_tokens=800,
+        )
+    except Exception:
+        log.exception(
+            "memory_consolidation_openai_failed user=%s model=%s days_back=%s logs=%s",
+            user_id,
+            Config.OPENAI_MODEL,
+            days_back,
+            len(logs),
+        )
+        raise
 
     update_text = response.choices[0].message.content.strip()
     return {

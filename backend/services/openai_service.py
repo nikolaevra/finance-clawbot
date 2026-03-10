@@ -269,6 +269,12 @@ def stream_chat(messages: list[dict]):
     try:
         response = client.chat.completions.create(**kwargs)
     except Exception as e:
+        log.exception(
+            "stream_chat_openai_failed model=%s has_tools=%s message_count=%s",
+            model,
+            tool_registry.has_tools,
+            len(messages),
+        )
         yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
         return
 
@@ -344,7 +350,7 @@ def generate_title(user_message: str, assistant_message: str) -> str:
                 {'role': 'user', 'content': user_message},
                 {'role': 'assistant', 'content': assistant_message[:500]},
             ],
-            max_tokens=20,
+            max_completion_tokens=20,
         )
         title = response.choices[0].message.content.strip()
         return title[:100]  # Safety cap
@@ -382,7 +388,7 @@ def summarize_document(text: str, filename: str) -> str | None:
                 {"role": "system", "content": _SUMMARIZE_PROMPT.format(filename=filename)},
                 {"role": "user", "content": truncated + indicator},
             ],
-            max_tokens=300,
+            max_completion_tokens=300,
         )
         return response.choices[0].message.content.strip()
     except Exception:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import types
+
+import pytest
 
 import tasks.analysis_tasks as analysis_tasks
 
@@ -92,3 +95,27 @@ def test_categorize_and_summary_use_openai(monkeypatch):
     monkeypatch.setattr(analysis_tasks, "get_openai", lambda: _OpenAIReport())
     summary = analysis_tasks.generate_financial_summary("user-1", {"days": 7})
     assert "Financial summary" in summary["report"]
+
+
+def test_categorize_transactions_logs_openai_failure(monkeypatch, caplog):
+    monkeypatch.setattr(
+        analysis_tasks,
+        "_fetch_live_transactions",
+        lambda _u, days=30, limit=50: [{"id": "t1", "total_amount": 10, "transaction_date": "2026-03-06"}],
+    )
+    monkeypatch.setattr(analysis_tasks.Config, "OPENAI_MINI_MODEL", "mini-test")
+
+    class _OpenAI:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(*_args, **_kwargs):
+                    raise RuntimeError("bad request")
+
+    monkeypatch.setattr(analysis_tasks, "get_openai", lambda: _OpenAI())
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError):
+            analysis_tasks.categorize_transactions("user-1", {"limit": 1})
+
+    assert "categorize_transactions_openai_failed user=user-1 model=mini-test limit=1" in caplog.text
