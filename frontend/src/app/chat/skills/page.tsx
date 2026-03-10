@@ -22,7 +22,6 @@ import {
 const DEFAULT_SKILL_TEMPLATE = `---
 name: my-new-skill
 description: Describe what this skill does
-enabled: true
 ---
 
 # My New Skill

@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 import uuid
 
@@ -106,6 +107,16 @@ def create_app() -> Flask:
     app.register_blueprint(activity_bp, url_prefix='/api')
     app.register_blueprint(skills_bp, url_prefix='/api')
     app.register_blueprint(inbox_bp, url_prefix='/api')
+
+    # Bootstrap Gmail Pub/Sub watches after API process boot.
+    # Keep this out of worker role to avoid duplicate initialization paths.
+    if os.getenv("SERVICE_ROLE", "api") != "worker":
+        try:
+            from tasks.gmail_watch_tasks import ensure_gmail_watches_on_startup
+
+            ensure_gmail_watches_on_startup()
+        except Exception:
+            log.exception("gmail_watch_bootstrap_unhandled_error")
 
     @app.route('/api/health')
     def health():

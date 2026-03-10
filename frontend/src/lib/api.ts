@@ -545,6 +545,25 @@ export async function archiveInboxThread(
   return res.json();
 }
 
+export async function discardInboxThreadDrafts(
+  threadId: string
+): Promise<{ status: string; discarded_drafts: number }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/inbox/threads/${encodeURIComponent(threadId)}/discard`,
+    {
+      method: "POST",
+      headers,
+    }
+  );
+  if (!res.ok) {
+    await logApiFailure(`/api/inbox/threads/${threadId}/discard`, "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to discard draft thread");
+  }
+  return res.json();
+}
+
 export async function downloadInboxAttachment(
   messageId: string,
   attachmentId: string
@@ -760,7 +779,8 @@ export async function createSkill(
 export async function updateSkill(
   name: string,
   content: string,
-  automation?: Partial<Skill>
+  automation?: Partial<Skill>,
+  newName?: string
 ): Promise<Skill> {
   const headers = await getAuthHeaders();
   const res = await fetch(
@@ -768,7 +788,7 @@ export async function updateSkill(
     {
       method: "PUT",
       headers,
-      body: JSON.stringify({ content, ...automation }),
+      body: JSON.stringify({ content, ...automation, new_name: newName }),
     }
   );
   if (!res.ok) {

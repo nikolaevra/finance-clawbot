@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import logging
+from datetime import datetime, timezone
 
 from flask import Blueprint, g, jsonify, request, send_file
 
@@ -14,6 +15,7 @@ from services.gmail_service import (
     modify_labels,
     reply_message,
     send_message,
+    trash_message,
 )
 from services.supabase_service import get_supabase
 from tasks.email_sync_tasks import hydrate_message_bodies, sync_gmail_history_delta
@@ -217,6 +219,13 @@ def get_thread(thread_id: str):
     ).data or []
     if not thread_rows:
         return jsonify({"error": "Thread not found"}), 404
+
+    # Pull latest label/message changes so newly created drafts are visible.
+    try:
+        sync_gmail_history_delta(integration["id"])
+    except Exception:
+        log.exception("thread_delta_sync_failed integration_id=%s thread_id=%s", integration["id"], thread_id)
+        sync_gmail_history_delta.delay(integration["id"])
 
     messages = (
         sb.table("emails")
@@ -510,3 +519,52 @@ def archive_thread(thread_id: str):
 
     sync_gmail_history_delta.delay(integration["id"])
     return jsonify({"status": "ok", "archived_messages": archived_count})
+
+
+@inbox_bp.route("/inbox/threads/<thread_id>/discard", methods=["POST"])
+@require_auth
+def discard_thread_drafts(thread_id: str):
+    integration = _get_gmail_integration(g.user_id)
+    if not integration:
+        return jsonify({"error": "Gmail integration not connected"}), 404
+
+    sb = get_supabase()
+    messages = (
+        sb.table("emails")
+        .select("gmail_message_id, label_ids_json, is_draft")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration["id"])
+        .eq("gmail_thread_id", thread_id)
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+    if not messages:
+        return jsonify({"error": "Thread not found"}), 404
+
+    draft_rows = [
+        row
+        for row in messages
+        if row.get("is_draft") or "DRAFT" in (row.get("label_ids_json") or [])
+    ]
+    if not draft_rows:
+        return jsonify({"error": "No draft messages found in this thread"}), 400
+
+    discarded_count = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for row in draft_rows:
+        message_id = row.get("gmail_message_id")
+        if not message_id:
+            continue
+        trash_message(integration["account_token"], message_id=message_id)
+        sb.table("emails").update(
+            {
+                "deleted_at": now_iso,
+                "updated_at": now_iso,
+                "is_draft": False,
+                "label_ids_json": [label for label in (row.get("label_ids_json") or []) if label != "DRAFT"],
+            }
+        ).eq("integration_id", integration["id"]).eq("gmail_message_id", message_id).execute()
+        discarded_count += 1
+
+    sync_gmail_history_delta.delay(integration["id"])
+    return jsonify({"status": "ok", "discarded_drafts": discarded_count})

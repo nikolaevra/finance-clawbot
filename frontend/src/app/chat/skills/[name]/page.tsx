@@ -65,6 +65,7 @@ export default function SkillEditorPage() {
   const skillName = decodeURIComponent(params.name as string);
 
   const [content, setContent] = useState("");
+  const [editableName, setEditableName] = useState(skillName);
   const [enabled, setEnabled] = useState(true);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleType, setScheduleType] = useState<"daily" | "weekly">("daily");
@@ -96,6 +97,7 @@ export default function SkillEditorPage() {
         const data = await fetchSkill(skillName);
         if (!cancelled) {
           setContent(data.content);
+          setEditableName(data.name || skillName);
           setEnabled(data.enabled ?? true);
           setScheduleEnabled(Boolean(data.schedule_enabled));
           setScheduleType(
@@ -156,8 +158,14 @@ export default function SkillEditorPage() {
     setSaving(true);
     setSaved(false);
     setError(null);
+    const normalizedName = editableName.trim();
+    if (!normalizedName) {
+      setError("Skill name is required.");
+      setSaving(false);
+      return;
+    }
     try {
-      await updateSkill(skillName, content, {
+      const automationPayload = {
         enabled,
         schedule_enabled: scheduleEnabled,
         schedule_type: scheduleEnabled ? scheduleType : null,
@@ -175,7 +183,14 @@ export default function SkillEditorPage() {
               subject_contains: gmailSubjectFilter.trim() || null,
             }
           : null,
-      });
+      };
+      const updated =
+        normalizedName === skillName
+          ? await updateSkill(skillName, content, automationPayload)
+          : await updateSkill(skillName, content, automationPayload, normalizedName);
+      if (updated?.name && updated.name !== skillName) {
+        router.replace(`/chat/skills/${encodeURIComponent(updated.name)}`);
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -198,6 +213,8 @@ export default function SkillEditorPage() {
     gmailInboxOnly,
     gmailFromFilter,
     gmailSubjectFilter,
+    editableName,
+    router,
   ]);
 
   useEffect(() => {
@@ -354,6 +371,16 @@ export default function SkillEditorPage() {
       </div>
 
       <div className="border-b border-foreground/[0.06] px-4 py-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-foreground/50">Name</span>
+          <input
+            type="text"
+            value={editableName}
+            onChange={(e) => setEditableName(e.target.value)}
+            className="w-72 rounded-lg bg-foreground/[0.06] px-2.5 py-1.5 text-foreground/70 outline-none ring-1 ring-foreground/[0.08]"
+            placeholder="skill-name"
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <label className="flex items-center gap-2 text-foreground/70">
             <input

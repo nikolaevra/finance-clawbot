@@ -22,13 +22,24 @@ STORAGE_BUCKET = "skills"
 MAX_SKILLS_IN_PROMPT = 50
 MAX_SKILLS_PROMPT_CHARS = 15_000
 DEFAULT_ONBOARDING_SKILL_NAME = "guided-onboarding-account-setup"
+AUTOMATION_FRONTMATTER_KEYS = {
+    "enabled",
+    "schedule_enabled",
+    "schedule_type",
+    "schedule_days",
+    "schedule_time",
+    "schedule_timezone",
+    "trigger_enabled",
+    "trigger_provider",
+    "trigger_event",
+    "trigger_filters",
+}
 
 DEFAULT_ONBOARDING_SKILL_CONTENT = dedent(
     """\
     ---
     name: guided-onboarding-account-setup
     description: Runs a guided onboarding and account-creation flow. Use when the user asks what you can do, wants onboarding, account setup, email inbox setup, Gmail automations, or accounting integration setup.
-    enabled: true
     ---
 
     # Guided Onboarding + Account Setup
@@ -146,6 +157,25 @@ def _parse_frontmatter(raw: str) -> dict[str, Any]:
         return {}
 
 
+def _strip_automation_frontmatter(raw: str) -> str:
+    """Remove automation settings from SKILL.md frontmatter.
+
+    Automation settings are persisted in the DB, not markdown metadata.
+    """
+    try:
+        post = frontmatter.loads(raw)
+    except Exception:
+        return raw
+
+    changed = False
+    for key in AUTOMATION_FRONTMATTER_KEYS:
+        if key in post.metadata:
+            del post.metadata[key]
+            changed = True
+
+    return frontmatter.dumps(post) if changed else raw
+
+
 # ── CRUD ──────────────────────────────────────────────────────────────
 
 
@@ -207,53 +237,27 @@ def save_skill(
     content: str,
     automation: dict[str, Any] | None = None,
 ) -> dict:
-    """Create or update a skill. Writes content to Storage and upserts metadata."""
+    """Create or update a skill. Stores automation in DB, content in Storage."""
     meta = _parse_frontmatter(content)
     description = meta.get("description", "")
     existing = get_skill_record(user_id, skill_name) or {}
     automation = automation or {}
-    enabled = bool(automation.get("enabled", meta.get("enabled", existing.get("enabled", True))))
-    schedule_enabled = bool(
-        automation.get("schedule_enabled", meta.get("schedule_enabled", existing.get("schedule_enabled", False)))
-    )
-    schedule_type = automation.get("schedule_type", meta.get("schedule_type", existing.get("schedule_type")))
-    schedule_days = automation.get("schedule_days", meta.get("schedule_days", existing.get("schedule_days")))
-    schedule_time = automation.get("schedule_time", meta.get("schedule_time", existing.get("schedule_time")))
-    schedule_timezone = automation.get(
-        "schedule_timezone", meta.get("schedule_timezone", existing.get("schedule_timezone"))
-    )
-    trigger_enabled = bool(
-        automation.get("trigger_enabled", meta.get("trigger_enabled", existing.get("trigger_enabled", False)))
-    )
-    trigger_provider = automation.get(
-        "trigger_provider", meta.get("trigger_provider", existing.get("trigger_provider"))
-    )
-    trigger_event = automation.get("trigger_event", meta.get("trigger_event", existing.get("trigger_event")))
-    trigger_filters = automation.get(
-        "trigger_filters",
-        meta.get("trigger_filters", existing.get("trigger_filters")),
-    )
+    enabled = bool(automation.get("enabled", existing.get("enabled", True)))
+    schedule_enabled = bool(automation.get("schedule_enabled", existing.get("schedule_enabled", False)))
+    schedule_type = automation.get("schedule_type", existing.get("schedule_type"))
+    schedule_days = automation.get("schedule_days", existing.get("schedule_days"))
+    schedule_time = automation.get("schedule_time", existing.get("schedule_time"))
+    schedule_timezone = automation.get("schedule_timezone", existing.get("schedule_timezone"))
+    trigger_enabled = bool(automation.get("trigger_enabled", existing.get("trigger_enabled", False)))
+    trigger_provider = automation.get("trigger_provider", existing.get("trigger_provider"))
+    trigger_event = automation.get("trigger_event", existing.get("trigger_event"))
+    trigger_filters = automation.get("trigger_filters", existing.get("trigger_filters"))
 
     sb = get_supabase()
     path = _storage_path(user_id, skill_name)
     store = _storage()
 
-    # Keep frontmatter metadata aligned with DB automation config.
-    try:
-        post = frontmatter.loads(content)
-        post.metadata["enabled"] = enabled
-        post.metadata["schedule_enabled"] = schedule_enabled
-        post.metadata["schedule_type"] = schedule_type
-        post.metadata["schedule_days"] = schedule_days
-        post.metadata["schedule_time"] = schedule_time
-        post.metadata["schedule_timezone"] = schedule_timezone
-        post.metadata["trigger_enabled"] = trigger_enabled
-        post.metadata["trigger_provider"] = trigger_provider
-        post.metadata["trigger_event"] = trigger_event
-        post.metadata["trigger_filters"] = trigger_filters
-        content = frontmatter.dumps(post)
-    except Exception:
-        log.warning("Failed to sync automation metadata to SKILL.md frontmatter: %s", skill_name)
+    content = _strip_automation_frontmatter(content)
 
     content_bytes = content.encode("utf-8")
     try:
@@ -305,7 +309,7 @@ def delete_skill(user_id: str, skill_name: str) -> bool:
 
 
 def toggle_skill(user_id: str, skill_name: str, enabled: bool) -> dict | None:
-    """Toggle a skill's enabled state and sync to the SKILL.md frontmatter."""
+    """Toggle a skill's enabled state in DB metadata."""
     sb = get_supabase()
     result = (
         sb.table("skills")
@@ -317,22 +321,54 @@ def toggle_skill(user_id: str, skill_name: str, enabled: bool) -> dict | None:
     if not result.data:
         return None
 
-    raw = get_skill(user_id, skill_name)
-    if raw:
+    return result.data[0]
+
+
+def rename_skill(user_id: str, old_name: str, new_name: str) -> dict | None:
+    """Rename a skill in both storage and DB metadata."""
+    if old_name == new_name:
+        return get_skill_record(user_id, old_name)
+
+    existing_new = get_skill_record(user_id, new_name)
+    if existing_new is not None:
+        raise ValueError(f"Skill '{new_name}' already exists.")
+
+    existing_old = get_skill_record(user_id, old_name)
+    if existing_old is None:
+        return None
+
+    old_path = _storage_path(user_id, old_name)
+    new_path = _storage_path(user_id, new_name)
+    store = _storage()
+
+    raw = get_skill(user_id, old_name)
+    if raw is not None:
         try:
             post = frontmatter.loads(raw)
-            post.metadata["enabled"] = enabled
-            updated_content = frontmatter.dumps(post)
-            path = _storage_path(user_id, skill_name)
-            _storage().update(
-                path,
-                updated_content.encode("utf-8"),
-                {"content-type": "text/markdown"},
-            )
+            post.metadata["name"] = new_name
+            raw = frontmatter.dumps(post)
         except Exception:
-            log.warning("Failed to sync enabled flag to SKILL.md for %s", skill_name)
+            # Keep rename non-blocking if markdown cannot be parsed.
+            pass
+        content_bytes = raw.encode("utf-8")
+        try:
+            store.update(new_path, content_bytes, {"content-type": "text/markdown"})
+        except Exception:
+            store.upload(new_path, content_bytes, {"content-type": "text/markdown"})
+        try:
+            store.remove([old_path])
+        except Exception:
+            log.warning("Failed to remove old skill file after rename: %s", old_path)
 
-    return result.data[0]
+    sb = get_supabase()
+    result = (
+        sb.table("skills")
+        .update({"name": new_name, "updated_at": datetime.now(timezone.utc).isoformat()})
+        .eq("user_id", user_id)
+        .eq("name", old_name)
+        .execute()
+    )
+    return result.data[0] if result and result.data else None
 
 
 def ensure_default_onboarding_skill(user_id: str) -> None:

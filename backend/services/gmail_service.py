@@ -803,3 +803,20 @@ def modify_labels(
         "threadId": result.get("threadId"),
         "labelIds": result.get("labelIds", []),
     }
+
+
+def trash_message(credentials_json: str, message_id: str) -> dict:
+    """Move a message to trash."""
+    log.info("trash_message id=%s", message_id)
+    service = _build_service(credentials_json)
+    result = (
+        service.users()
+        .messages()
+        .trash(userId="me", id=message_id)
+        .execute()
+    )
+    return {
+        "id": result.get("id"),
+        "threadId": result.get("threadId"),
+        "labelIds": result.get("labelIds", []),
+    }

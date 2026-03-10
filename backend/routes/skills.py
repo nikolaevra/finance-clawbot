@@ -185,15 +185,33 @@ def update_skill(name: str):
     """Update an existing skill's content."""
     body = request.get_json(silent=True) or {}
     content = _resolve_tool_mentions(body.get("content", "")).strip()
+    new_name = (body.get("new_name") or "").strip()
 
     if not content:
         return jsonify({"error": "Skill content is required."}), 400
+
+    if new_name:
+        name_error = _validate_skill_name(new_name)
+        if name_error:
+            return jsonify({"error": name_error}), 400
+        if new_name != name:
+            existing = skill_service.get_skill_record(g.user_id, new_name)
+            if existing is not None:
+                return jsonify({"error": f"Skill '{new_name}' already exists."}), 409
 
     automation, automation_error = _validate_automation(body)
     if automation_error:
         return jsonify({"error": automation_error}), 400
 
     row = skill_service.save_skill(g.user_id, name, content, automation)
+    if new_name and new_name != name:
+        try:
+            renamed = skill_service.rename_skill(g.user_id, name, new_name)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 409
+        if renamed is None:
+            return jsonify({"error": f"Skill '{name}' not found."}), 404
+        row = renamed
     return jsonify(row)
 
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive,
+  Trash2,
   Inbox,
   Loader2,
   MailPlus,
@@ -20,6 +21,7 @@ import {
   fetchInboxThreads,
   forwardInboxEmail,
   archiveInboxThread,
+  discardInboxThreadDrafts,
   markInboxMessageRead,
   replyInboxEmail,
   sendInboxEmail,
@@ -146,6 +148,10 @@ export default function InboxPage() {
     [threads, selectedThreadId]
   );
   const latestMessage = messages[messages.length - 1];
+  const hasDraftMessages = useMemo(
+    () => messages.some((message) => message.is_draft),
+    [messages]
+  );
 
   const loadThreads = useCallback(async () => {
     setLoadingThreads(true);
@@ -286,10 +292,20 @@ export default function InboxPage() {
     setArchiving(true);
     setError(null);
     try {
-      await archiveInboxThread(selectedThreadId);
+      if (hasDraftMessages || activeTab === "drafts") {
+        await discardInboxThreadDrafts(selectedThreadId);
+      } else {
+        await archiveInboxThread(selectedThreadId);
+      }
       setRefreshTick((n) => n + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to archive thread");
+      setError(
+        err instanceof Error
+          ? err.message
+          : hasDraftMessages || activeTab === "drafts"
+          ? "Failed to discard draft thread"
+          : "Failed to archive thread"
+      );
     } finally {
       setArchiving(false);
     }
@@ -465,8 +481,14 @@ export default function InboxPage() {
                 disabled={!selectedThread || archiving}
                 className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.08] disabled:opacity-40"
               >
-                {archiving ? <Loader2 size={12} className="animate-spin" /> : <Archive size={12} />}
-                Archive
+                {archiving ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : hasDraftMessages || activeTab === "drafts" ? (
+                  <Trash2 size={12} />
+                ) : (
+                  <Archive size={12} />
+                )}
+                {hasDraftMessages || activeTab === "drafts" ? "Discard" : "Archive"}
               </button>
             </div>
           </div>
