@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from email.utils import getaddresses, parseaddr
 from typing import Any
 
+from googleapiclient.errors import HttpError
+
 from celery_app import celery
 from services.gmail_service import (
     get_message_raw,
@@ -494,6 +496,8 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
     added_or_changed: set[str] = set()
     deleted_ids: set[str] = set()
     hydrated_candidates: set[str] = set()
+    skipped_missing = 0
+    upserted_count = 0
     latest_history_id = start_history_id
     page_token: str | None = None
     try:
@@ -522,13 +526,22 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
                 break
 
         for msg_id in added_or_changed:
-            msg = get_message_raw(
-                token,
-                msg_id,
-                format="metadata",
-                metadata_headers=METADATA_HEADERS,
-            )
+            try:
+                msg = get_message_raw(
+                    token,
+                    msg_id,
+                    format="metadata",
+                    metadata_headers=METADATA_HEADERS,
+                )
+            except HttpError as exc:
+                status = getattr(getattr(exc, "resp", None), "status", None)
+                if status == 404:
+                    skipped_missing += 1
+                    log.info("gmail_delta_missing_message_skipped integration_id=%s msg_id=%s", integration_id, msg_id)
+                    continue
+                raise
             _upsert_message(sb, user_id, integration_id, msg, hydrate_body=False)
+            upserted_count += 1
             labels = msg.get("labelIds") or []
             internal_ts = int(msg.get("internalDate") or 0) if str(msg.get("internalDate") or "").isdigit() else 0
             is_recent = False
@@ -560,7 +573,8 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
         return {
             "status": "ok",
             "integration_id": integration_id,
-            "upserted": len(added_or_changed),
+            "upserted": upserted_count,
+            "skipped_missing": skipped_missing,
             "deleted": len(deleted_ids),
             "history_id": latest_history_id,
             "hydration_enqueued": min(len(hydrated_candidates), 500),

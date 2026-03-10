@@ -167,6 +167,8 @@ class Gateway:
             "message": "Processing message",
         })
 
+        # Ensure downstream tools/tasks running outside request routes still have user context.
+        g.user_id = user_id
         g.conversation_id = conversation_id
 
         # 1. Session context (today + yesterday daily logs)
