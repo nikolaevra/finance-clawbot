@@ -19,6 +19,7 @@ export default function ChatPage() {
   const autoSentRef = useRef<string | null>(null);
   const routeConversationId = params?.id?.[0] ?? null;
   const queryPrompt = (searchParams.get("q") || "").trim();
+  const forcedSkill = (searchParams.get("skill") || "").trim() || undefined;
 
   const {
     messages,
@@ -63,17 +64,22 @@ export default function ChatPage() {
     if (activeConversationId !== routeConversationId) return;
     if (isLoading) return;
 
-    const promptKey = `${routeConversationId}:${queryPrompt}`;
+    const promptKey = `${routeConversationId}:${queryPrompt}:${forcedSkill ?? ""}`;
     if (autoSentRef.current === promptKey) return;
 
     autoSentRef.current = promptKey;
-    void send(queryPrompt);
+    if (forcedSkill) {
+      void send(queryPrompt, { forcedSkill });
+    } else {
+      void send(queryPrompt);
+    }
     router.replace(`/chat/${routeConversationId}`);
   }, [
     routeConversationId,
     queryPrompt,
     activeConversationId,
     isLoading,
+    forcedSkill,
     send,
     router,
   ]);

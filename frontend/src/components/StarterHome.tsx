@@ -12,6 +12,21 @@ interface StarterHomeProps {
 
 type DaySegment = "morning" | "afternoon" | "evening" | "night";
 
+const ONBOARDING_SKILL = "guided-onboarding-account-setup";
+
+const STARTER_PROMPTS: Array<{ text: string; forcedSkill?: string }> = [
+  {
+    text: "Explain what you can do and guide me through onboarding plus account setup.",
+    forcedSkill: ONBOARDING_SKILL,
+  },
+  {
+    text: "Review my monthly spending and suggest 3 ways to reduce costs.",
+  },
+  {
+    text: "Help me build a simple weekly budgeting plan I can follow.",
+  },
+];
+
 function getDaySegment(hour: number): DaySegment {
   if (hour >= 5 && hour < 12) return "morning";
   if (hour >= 12 && hour < 17) return "afternoon";
@@ -71,6 +86,12 @@ export default function StarterHome({
     try {
       const conversation = await createConversation("New Chat");
       const query = new URLSearchParams({ q: trimmedPrompt });
+      const matchedStarter = STARTER_PROMPTS.find(
+        (starter) => starter.text === trimmedPrompt
+      );
+      if (matchedStarter?.forcedSkill) {
+        query.set("skill", matchedStarter.forcedSkill);
+      }
       router.push(`/chat/${conversation.id}?${query.toString()}`);
     } catch {
       setError("Unable to start a new conversation. Please try again.");
@@ -102,6 +123,19 @@ export default function StarterHome({
         <p className="mb-3 text-sm text-foreground/60">
           Start a new finance conversation
         </p>
+        <div className="mb-3 flex flex-wrap gap-2">
+          {STARTER_PROMPTS.map((starterPrompt) => (
+            <button
+              key={starterPrompt.text}
+              type="button"
+              onClick={() => setPrompt(starterPrompt.text)}
+              disabled={isSubmitting}
+              className="rounded-full border border-foreground/[0.12] px-3 py-1.5 text-xs text-foreground/75 transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {starterPrompt.text}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <input
             value={prompt}

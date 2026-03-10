@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 import uuid
 from datetime import date
 
@@ -128,6 +129,71 @@ def store_document(user_id: str, filename: str, file_bytes: bytes, content_type:
         {"content-type": content_type},
     )
     return path
+
+
+def ingest_document_upload(
+    user_id: str,
+    filename: str,
+    file_bytes: bytes,
+    content_type: str = "application/octet-stream",
+) -> dict:
+    """
+    Persist and process an uploaded document payload.
+
+    Mirrors the normal /documents/upload flow so callers (e.g. Inbox
+    attachment imports) trigger the same extraction, indexing, and daily
+    memory summary behavior.
+    """
+    ext = get_file_extension(filename)
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(
+            f"Unsupported file type: .{ext}. Accepted: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise ValueError(
+            f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB."
+        )
+
+    sb = get_supabase()
+    started = time.monotonic()
+    log.info(
+        "document_ingest_start user=%s filename=%s size=%d ext=%s",
+        user_id,
+        filename,
+        len(file_bytes),
+        ext,
+    )
+
+    storage_path = store_document(user_id, filename, file_bytes, content_type)
+    result = sb.table("documents").insert({
+        "user_id": user_id,
+        "filename": filename,
+        "file_type": ext,
+        "file_size": len(file_bytes),
+        "storage_path": storage_path,
+        "status": "processing",
+    }).execute()
+    doc = result.data[0]
+
+    try:
+        process_document(user_id, doc["id"], storage_path, ext)
+        refreshed = sb.table("documents").select("*").eq("id", doc["id"]).execute()
+        doc = refreshed.data[0] if refreshed.data else doc
+    except Exception:
+        log.exception("process_document failed for doc=%s user=%s", doc["id"], user_id)
+        refreshed = sb.table("documents").select("*").eq("id", doc["id"]).execute()
+        doc = refreshed.data[0] if refreshed.data else doc
+
+    elapsed = (time.monotonic() - started) * 1000
+    log.info(
+        "document_ingest_done user=%s doc=%s status=%s duration_ms=%.0f",
+        user_id,
+        doc.get("id"),
+        doc.get("status"),
+        elapsed,
+    )
+    return doc
 
 
 def download_document(storage_path: str) -> bytes:

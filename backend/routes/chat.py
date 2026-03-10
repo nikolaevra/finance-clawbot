@@ -41,6 +41,7 @@ def chat(conversation_id: str):
 
     body = request.get_json(silent=True) or {}
     user_message = body.get('message', '').strip()
+    forced_skill = (body.get('forced_skill') or '').strip() or None
     if not user_message:
         log.warning("chat_empty_message user=%s conversation=%s", g.user_id, conversation_id)
         return jsonify({'error': 'Message is required'}), 400
@@ -54,7 +55,12 @@ def chat(conversation_id: str):
 
     return Response(
         stream_with_context(
-            gateway.handle_message(g.user_id, conversation_id, user_message)
+            gateway.handle_message(
+                g.user_id,
+                conversation_id,
+                user_message,
+                forced_skill=forced_skill,
+            )
         ),
         mimetype='text/event-stream',
         headers={

@@ -44,6 +44,7 @@ from services.workflow_engine import (
     get_active_workflows,
 )
 from services.skill_service import load_skills_for_prompt
+from services.skill_service import ensure_default_onboarding_skill
 from tools.registry import tool_registry
 
 log = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ class Gateway:
         user_id: str,
         conversation_id: str,
         user_message: str,
+        forced_skill: str | None = None,
     ) -> Iterator[str]:
         """Single entry point for ALL inbound messages.  Yields SSE events.
 
@@ -209,6 +211,7 @@ class Gateway:
             user_id=user_id,
             conversation_id=conversation_id,
             user_message=user_message,
+            forced_skill=forced_skill,
             memory_context=memory_context,
             retrieved_context=retrieved_context,
             workflow_context=workflow_context,
@@ -240,6 +243,7 @@ class Gateway:
         user_id: str,
         conversation_id: str,
         user_message: str,
+        forced_skill: str | None,
         memory_context: str,
         retrieved_context: str,
         workflow_context: str,
@@ -280,6 +284,17 @@ class Gateway:
                 bootstrap_context=bootstrap_context or None,
             )
 
+            if forced_skill and not self._is_skill_already_loaded(history, forced_skill):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "For this turn, you must call skill_read first with "
+                            f'skill_name="{forced_skill}" and then follow that skill.'
+                        ),
+                    }
+                )
+
             # Pre-compaction flush (once per request)
             if not flush_done:
                 token_count = count_tokens(messages)
@@ -298,6 +313,16 @@ class Gateway:
                         skills_context=skills_context,
                         bootstrap_context=bootstrap_context or None,
                     )
+                    if forced_skill and not self._is_skill_already_loaded(history, forced_skill):
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "For this turn, you must call skill_read first with "
+                                    f'skill_name="{forced_skill}" and then follow that skill.'
+                                ),
+                            }
+                        )
 
             publish_event(user_id, {
                 "type": "agent_streaming",
@@ -487,6 +512,7 @@ class Gateway:
             user_id=user_id,
             conversation_id=conversation_id,
             user_message="",
+            forced_skill=None,
             memory_context=memory_context,
             retrieved_context="",
             workflow_context="",
@@ -557,10 +583,33 @@ class Gateway:
         except Exception:
             log.exception("ensure_bootstrap_files failed for user=%s", user_id)
         try:
+            ensure_default_onboarding_skill(user_id)
+        except Exception:
+            log.exception("ensure_default_onboarding_skill failed for user=%s", user_id)
+        try:
             memory_context = get_session_context(user_id)
         except Exception:
             log.exception("get_session_context failed for user=%s", user_id)
         return memory_context
+
+    @staticmethod
+    def _is_skill_already_loaded(history: list[dict], skill_name: str) -> bool:
+        """Return True once skill_read has been called for the forced skill."""
+        for msg in history:
+            if msg.get("role") != "assistant":
+                continue
+            for call in msg.get("tool_calls") or []:
+                fn = call.get("function") or {}
+                if fn.get("name") != "skill_read":
+                    continue
+                args_raw = fn.get("arguments")
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+                except Exception:
+                    args = {}
+                if args.get("skill_name") == skill_name:
+                    return True
+        return False
 
     @staticmethod
     def _retrieve_context(user_id: str, query: str) -> tuple[str, list[dict]]:

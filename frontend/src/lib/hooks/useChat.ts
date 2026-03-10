@@ -50,7 +50,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
   );
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, options?: { forcedSkill?: string }) => {
       if (!conversationId || isLoading) return;
 
       setError(null);
@@ -84,7 +84,11 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
 
       try {
         logger.info("chat_send_start", { conversationId });
-        const response = await sendMessage(conversationId, text);
+        const response = await sendMessage(
+          conversationId,
+          text,
+          options?.forcedSkill
+        );
         if (!response.ok) {
           logger.warn("chat_send_http_error", {
             conversationId,

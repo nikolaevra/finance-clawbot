@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from textwrap import dedent
 from typing import Any
 
 import frontmatter
@@ -20,6 +21,92 @@ log = logging.getLogger(__name__)
 STORAGE_BUCKET = "skills"
 MAX_SKILLS_IN_PROMPT = 50
 MAX_SKILLS_PROMPT_CHARS = 15_000
+DEFAULT_ONBOARDING_SKILL_NAME = "guided-onboarding-account-setup"
+
+DEFAULT_ONBOARDING_SKILL_CONTENT = dedent(
+    """\
+    ---
+    name: guided-onboarding-account-setup
+    description: Runs a guided onboarding and account-creation flow. Use when the user asks what you can do, wants onboarding, account setup, email inbox setup, Gmail automations, or accounting integration setup.
+    enabled: true
+    ---
+
+    # Guided Onboarding + Account Setup
+
+    ## Goal
+    Run a complete, step-by-step onboarding that:
+    1. Explains assistant capabilities in plain language
+    2. Sets up required memory files (especially USER.md and long-term memory)
+    3. Verifies or guides connection of Gmail and accounting integrations
+    4. Ends with a concrete "ready to use" checklist
+
+    ## How To Run This Skill
+    Follow the steps in order. Keep each step short, clear, and actionable.
+    Do not skip checks even if the user sounds ready.
+
+    ### Step 1 - Capability Overview
+    - Explain what you can do:
+      - Inbox management (read/summarize/draft/reply/forward with confirmation when sending)
+      - Finance analysis from connected accounting systems
+      - Tracking and recalling context via memory files
+      - Running repeatable skills and automations
+    - End this step by asking: "Want me to guide you through full setup now?"
+
+    ### Step 2 - Identity + User Profile Memory Setup
+    Your objective is to set up profile context even on day 1.
+
+    - Ask for missing essentials:
+      - preferred name
+      - timezone
+      - company/business name
+      - role
+      - primary finance priorities (for example: cash flow, expenses, invoicing)
+    - Persist what you learn:
+      - Use memory_save to store durable profile facts in MEMORY.md
+      - Use memory_append to add today's onboarding notes to daily memory
+    - If USER.md is incomplete or stale:
+      - Tell the user exactly what fields should be filled in USER.md
+      - Offer to generate a clean USER.md draft they can paste into the Memories editor
+
+    ### Step 3 - Email Setup Check (Inbox + Drafting + Automations)
+    - Confirm whether Gmail integration is connected.
+    - If not connected, provide this setup sequence:
+      1. Open Integrations page
+      2. Connect Gmail
+      3. Return here and say "Gmail connected"
+    - After connected, explain what unlocks:
+      - Manage inbox from chat
+      - Draft replies quickly
+      - Trigger automations when new emails arrive (for example: invoice triage, follow-up draft prep)
+    - Ask whether they want an email-trigger automation configured next.
+
+    ### Step 4 - Accounting Setup Check
+    - Confirm whether an accounting integration is connected (QuickBooks / NetSuite / Float as available).
+    - If not connected, provide this setup sequence:
+      1. Open Integrations page
+      2. Connect accounting system
+      3. Return here and say "Accounting connected"
+    - After connected, explain what unlocks:
+      - account and transaction lookup
+      - spend analysis and anomaly checks
+      - bill and reporting assistance
+
+    ### Step 5 - Completion Checklist + Next Action
+    End with a checklist showing status:
+    - [ ] USER profile captured
+    - [ ] Memory baseline saved
+    - [ ] Gmail connected
+    - [ ] Accounting connected
+    - [ ] First automation selected
+
+    Then propose exactly one high-value next action based on missing items.
+
+    ## Output Style
+    - Keep guidance practical and concise.
+    - Prefer numbered steps and checklists over long paragraphs.
+    - Ask one setup question at a time during onboarding.
+    """
+)
 
 _bucket_ready = False
 
@@ -242,6 +329,18 @@ def toggle_skill(user_id: str, skill_name: str, enabled: bool) -> dict | None:
             log.warning("Failed to sync enabled flag to SKILL.md for %s", skill_name)
 
     return result.data[0]
+
+
+def ensure_default_onboarding_skill(user_id: str) -> None:
+    """Create the default guided onboarding skill when it is missing."""
+    if get_skill(user_id, DEFAULT_ONBOARDING_SKILL_NAME) is not None:
+        return
+    save_skill(
+        user_id=user_id,
+        skill_name=DEFAULT_ONBOARDING_SKILL_NAME,
+        content=DEFAULT_ONBOARDING_SKILL_CONTENT,
+        automation={"enabled": True},
+    )
 
 
 # ── Prompt injection ──────────────────────────────────────────────────

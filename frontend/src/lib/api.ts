@@ -122,13 +122,14 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export async function sendMessage(
   conversationId: string,
-  message: string
+  message: string,
+  forcedSkill?: string
 ): Promise<Response> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/api/chat/${conversationId}`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, forced_skill: forcedSkill }),
   });
   if (!res.ok) {
     await logApiFailure(`/api/chat/${conversationId}`, "POST", res);
