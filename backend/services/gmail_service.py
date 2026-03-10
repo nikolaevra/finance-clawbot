@@ -21,10 +21,36 @@ from email.utils import parseaddr
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from flask import g, has_request_context
 
 from config import Config
+from services.audit_log_service import log_external_api_call
 
 log = logging.getLogger(__name__)
+def _log_gmail_call(
+    *,
+    operation: str,
+    status: str,
+    started: float,
+    error_message: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    if not has_request_context():
+        return
+    user_id = getattr(g, "user_id", None)
+    if not user_id:
+        return
+    log_external_api_call(
+        user_id=user_id,
+        service="gmail",
+        operation=operation,
+        status=status,
+        duration_ms=(time.monotonic() - started) * 1000,
+        error_message=error_message,
+        details=details,
+    )
+
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -182,23 +208,34 @@ def register_inbox_watch(credentials_json: str, topic_name: str) -> dict[str, st
     if not topic_name:
         raise ValueError("topic_name is required for Gmail watch registration")
 
-    service = _build_service(credentials_json)
-    response = (
-        service.users()
-        .watch(
-            userId="me",
-            body={
-                "topicName": topic_name,
-                "labelIds": ["INBOX"],
-                "labelFilterAction": "include",
-            },
+    started = time.monotonic()
+    try:
+        service = _build_service(credentials_json)
+        response = (
+            service.users()
+            .watch(
+                userId="me",
+                body={
+                    "topicName": topic_name,
+                    "labelIds": ["INBOX"],
+                    "labelFilterAction": "include",
+                },
+            )
+            .execute()
         )
-        .execute()
-    )
-    return {
-        "historyId": str(response.get("historyId", "")),
-        "expiration": str(response.get("expiration", "")),
-    }
+        _log_gmail_call(operation="users.watch", status="success", started=started)
+        return {
+            "historyId": str(response.get("historyId", "")),
+            "expiration": str(response.get("expiration", "")),
+        }
+    except Exception as exc:
+        _log_gmail_call(
+            operation="users.watch",
+            status="error",
+            started=started,
+            error_message=str(exc),
+        )
+        raise
 
 
 def list_new_inbox_messages_since(
@@ -206,10 +243,17 @@ def list_new_inbox_messages_since(
     start_history_id: str | None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Return new inbox message summaries since a history cursor."""
+    started = time.monotonic()
     service = _build_service(credentials_json)
 
     if not start_history_id:
         profile = get_profile(credentials_json)
+        _log_gmail_call(
+            operation="users.history.list + users.getProfile",
+            status="success",
+            started=started,
+            details={"events": 0, "cursor_seeded": True},
+        )
         return [], profile.get("historyId")
 
     try:
@@ -226,6 +270,12 @@ def list_new_inbox_messages_since(
     except Exception:
         # Cursor can expire; caller can re-seed from latest profile historyId.
         profile = get_profile(credentials_json)
+        _log_gmail_call(
+            operation="users.history.list + users.getProfile",
+            status="success",
+            started=started,
+            details={"events": 0, "cursor_reseeded": True},
+        )
         return [], profile.get("historyId")
 
     seen_ids: set[str] = set()
@@ -267,6 +317,12 @@ def list_new_inbox_messages_since(
             )
 
     latest_history_id = str(history_resp.get("historyId") or start_history_id)
+    _log_gmail_call(
+        operation="users.history.list + users.messages.get(metadata)",
+        status="success",
+        started=started,
+        details={"events": len(events)},
+    )
     return events, latest_history_id
 
 
@@ -373,21 +429,37 @@ def list_history_page(
     page_token: str | None = None,
 ) -> dict[str, Any]:
     """Return one page of Gmail history deltas from a checkpoint."""
-    service = _build_service(credentials_json)
-    kwargs: dict[str, Any] = {
-        "userId": "me",
-        "startHistoryId": start_history_id,
-        "historyTypes": ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"],
-    }
-    if page_token:
-        kwargs["pageToken"] = page_token
+    started = time.monotonic()
+    try:
+        service = _build_service(credentials_json)
+        kwargs: dict[str, Any] = {
+            "userId": "me",
+            "startHistoryId": start_history_id,
+            "historyTypes": ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"],
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
 
-    result = service.users().history().list(**kwargs).execute()
-    return {
-        "history": result.get("history", []) or [],
-        "next_page_token": result.get("nextPageToken"),
-        "history_id": str(result.get("historyId") or start_history_id),
-    }
+        result = service.users().history().list(**kwargs).execute()
+        _log_gmail_call(
+            operation="users.history.list",
+            status="success",
+            started=started,
+            details={"has_next_page": bool(result.get("nextPageToken"))},
+        )
+        return {
+            "history": result.get("history", []) or [],
+            "next_page_token": result.get("nextPageToken"),
+            "history_id": str(result.get("historyId") or start_history_id),
+        }
+    except Exception as exc:
+        _log_gmail_call(
+            operation="users.history.list",
+            status="error",
+            started=started,
+            error_message=str(exc),
+        )
+        raise
 
 
 # ── list_messages ────────────────────────────────────────────────────
@@ -566,6 +638,7 @@ def send_message(
 ) -> dict:
     """Send an email via the Gmail API.  Returns the sent message metadata."""
     log.info("send_message to=%r subject=%r", to, subject)
+    started = time.monotonic()
     service = _build_service(credentials_json)
 
     mime = MIMEMultipart()
@@ -577,17 +650,31 @@ def send_message(
 
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
 
-    sent = (
-        service.users()
-        .messages()
-        .send(userId="me", body={"raw": raw})
-        .execute()
-    )
-    return {
-        "id": sent.get("id"),
-        "threadId": sent.get("threadId"),
-        "labelIds": sent.get("labelIds", []),
-    }
+    try:
+        sent = (
+            service.users()
+            .messages()
+            .send(userId="me", body={"raw": raw})
+            .execute()
+        )
+        _log_gmail_call(
+            operation="users.messages.send",
+            status="success",
+            started=started,
+        )
+        return {
+            "id": sent.get("id"),
+            "threadId": sent.get("threadId"),
+            "labelIds": sent.get("labelIds", []),
+        }
+    except Exception as exc:
+        _log_gmail_call(
+            operation="users.messages.send",
+            status="error",
+            started=started,
+            error_message=str(exc),
+        )
+        raise
 
 
 # ── create_draft ─────────────────────────────────────────────────────
@@ -625,6 +712,59 @@ def create_draft(
         "message_id": draft.get("message", {}).get("id"),
         "thread_id": draft.get("message", {}).get("threadId"),
         "label_ids": draft.get("message", {}).get("labelIds", []),
+    }
+
+
+# ── send_draft_by_message_id ─────────────────────────────────────────
+
+
+def send_draft_by_message_id(
+    credentials_json: str,
+    message_id: str,
+) -> dict:
+    """Send an existing Gmail draft by locating it via draft message ID."""
+    log.info("send_draft_by_message_id message_id=%s", message_id)
+    service = _build_service(credentials_json)
+
+    draft_id: str | None = None
+    page_token: str | None = None
+    scanned_pages = 0
+
+    while True:
+        scanned_pages += 1
+        request_kwargs: dict[str, Any] = {"userId": "me", "maxResults": 100}
+        if page_token:
+            request_kwargs["pageToken"] = page_token
+        page = service.users().drafts().list(**request_kwargs).execute()
+
+        for draft in page.get("drafts", []) or []:
+            draft_message_id = (draft.get("message") or {}).get("id")
+            if draft_message_id == message_id:
+                draft_id = draft.get("id")
+                break
+
+        if draft_id:
+            break
+
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not draft_id:
+        raise ValueError(
+            f"Draft not found for message_id={message_id} (scanned_pages={scanned_pages})"
+        )
+
+    sent = (
+        service.users()
+        .drafts()
+        .send(userId="me", body={"id": draft_id})
+        .execute()
+    )
+    return {
+        "id": sent.get("id"),
+        "threadId": sent.get("threadId"),
+        "labelIds": sent.get("labelIds", []),
     }
 
 

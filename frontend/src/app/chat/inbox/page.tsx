@@ -24,6 +24,7 @@ import {
   discardInboxThreadDrafts,
   markInboxMessageRead,
   replyInboxEmail,
+  sendInboxDraft,
   sendInboxEmail,
   downloadInboxAttachment,
   saveInboxAttachmentToDocuments,
@@ -133,6 +134,7 @@ export default function InboxPage() {
   const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [sendingDraft, setSendingDraft] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [attachmentActions, setAttachmentActions] = useState<Record<string, "downloading" | "saving" | "saved">>({});
@@ -150,6 +152,16 @@ export default function InboxPage() {
   const latestMessage = messages[messages.length - 1];
   const hasDraftMessages = useMemo(
     () => messages.some((message) => message.is_draft),
+    [messages]
+  );
+  const selectedDraftMessage = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.is_draft || (message.label_ids_json || []).includes("DRAFT")
+        ) || null,
     [messages]
   );
 
@@ -308,6 +320,20 @@ export default function InboxPage() {
       );
     } finally {
       setArchiving(false);
+    }
+  };
+
+  const sendSelectedDraft = async () => {
+    if (!selectedDraftMessage || sendingDraft) return;
+    setSendingDraft(true);
+    setError(null);
+    try {
+      await sendInboxDraft(selectedDraftMessage.gmail_message_id);
+      setRefreshTick((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send draft");
+    } finally {
+      setSendingDraft(false);
     }
   };
 
@@ -476,6 +502,20 @@ export default function InboxPage() {
                 <Forward size={12} />
                 Forward
               </button>
+              {(hasDraftMessages || activeTab === "drafts") && (
+                <button
+                  onClick={sendSelectedDraft}
+                  disabled={!selectedDraftMessage || sendingDraft}
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.08] disabled:opacity-40"
+                >
+                  {sendingDraft ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Send size={12} />
+                  )}
+                  Send Draft
+                </button>
+              )}
               <button
                 onClick={archiveSelectedThread}
                 disabled={!selectedThread || archiving}

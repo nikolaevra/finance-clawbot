@@ -16,7 +16,7 @@ from celery_app import celery
 
 log = logging.getLogger(__name__)
 from services.supabase_service import get_supabase
-from services.event_bus import publish_event
+from services.audit_log_service import publish_event
 from services.workflow_engine import (
     _resolve_step_input,
     _evaluate_condition,

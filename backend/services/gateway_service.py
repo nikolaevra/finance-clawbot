@@ -21,7 +21,7 @@ from typing import Any, Iterator
 from flask import g
 
 from config import Config
-from services.event_bus import publish_event
+from services.audit_log_service import publish_event, log_skill_live
 from services.supabase_service import get_supabase
 from services.openai_service import (
     stream_chat,
@@ -45,6 +45,9 @@ from services.workflow_engine import (
 )
 from services.skill_service import load_skills_for_prompt
 from services.skill_service import ensure_default_onboarding_skill
+from services.skill_service import ensure_default_finance_triage_skill
+from services.skill_service import ensure_default_float_spend_overview_skill
+from services.skill_service import ensure_default_skill_creator_planner_skill
 from tools.registry import tool_registry
 
 log = logging.getLogger(__name__)
@@ -587,6 +590,18 @@ class Gateway:
         except Exception:
             log.exception("ensure_default_onboarding_skill failed for user=%s", user_id)
         try:
+            ensure_default_finance_triage_skill(user_id)
+        except Exception:
+            log.exception("ensure_default_finance_triage_skill failed for user=%s", user_id)
+        try:
+            ensure_default_float_spend_overview_skill(user_id)
+        except Exception:
+            log.exception("ensure_default_float_spend_overview_skill failed for user=%s", user_id)
+        try:
+            ensure_default_skill_creator_planner_skill(user_id)
+        except Exception:
+            log.exception("ensure_default_skill_creator_planner_skill failed for user=%s", user_id)
+        try:
             memory_context = get_session_context(user_id)
         except Exception:
             log.exception("get_session_context failed for user=%s", user_id)
@@ -757,6 +772,15 @@ class Gateway:
             "tool_name": tool_name,
             "message": dispatch_msg,
         })
+        if conversation_id:
+            log_skill_live(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                tool_name=tool_name,
+                status="started",
+                message=dispatch_msg,
+                details={"args": parsed_args},
+            )
         try:
             result = tool_registry.execute(tool_name, tool_args)
             log.debug("tool=%s completed (%d chars)", tool_name, len(result) if result else 0)
@@ -766,6 +790,14 @@ class Gateway:
                 "tool_name": tool_name,
                 "message": complete_fn(result),
             })
+            if conversation_id:
+                log_skill_live(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    tool_name=tool_name,
+                    status="success",
+                    message=complete_fn(result),
+                )
             return result
         except Exception as exc:
             log.exception("tool=%s raised an exception", tool_name)
@@ -775,6 +807,15 @@ class Gateway:
                 "tool_name": tool_name,
                 "message": f"{tool_name} failed: {exc}",
             })
+            if conversation_id:
+                log_skill_live(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    tool_name=tool_name,
+                    status="error",
+                    message=f"{tool_name} failed: {exc}",
+                    details={"error": str(exc)},
+                )
             raise
 
     # ── Workflow context helpers ────────────────────────────────────

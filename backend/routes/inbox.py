@@ -14,6 +14,7 @@ from services.gmail_service import (
     forward_message,
     modify_labels,
     reply_message,
+    send_draft_by_message_id,
     send_message,
     trash_message,
 )
@@ -456,6 +457,58 @@ def inbox_forward():
     if sent.get("id"):
         hydrate_message_bodies.delay(integration["id"], [sent["id"]])
         sync_gmail_history_delta.delay(integration["id"])
+    return jsonify(sent), 201
+
+
+@inbox_bp.route("/inbox/drafts/<message_id>/send", methods=["POST"])
+@require_auth
+def inbox_send_draft(message_id: str):
+    message_id = (message_id or "").strip()
+    if not message_id:
+        return jsonify({"error": "message_id is required"}), 400
+
+    integration = _get_gmail_integration(g.user_id)
+    if not integration:
+        return jsonify({"error": "Gmail integration not connected"}), 404
+
+    sb = get_supabase()
+    rows = (
+        sb.table("emails")
+        .select("gmail_message_id, is_draft, label_ids_json")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration["id"])
+        .eq("gmail_message_id", message_id)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return jsonify({"error": "Draft message not found"}), 404
+
+    row = rows[0]
+    labels = row.get("label_ids_json") or []
+    if not row.get("is_draft") and "DRAFT" not in labels:
+        return jsonify({"error": "Message is not a draft"}), 400
+
+    try:
+        sent = send_draft_by_message_id(
+            integration["account_token"],
+            message_id=message_id,
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception:
+        log.exception(
+            "inbox_send_draft_failed user=%s integration_id=%s message_id=%s",
+            g.user_id,
+            integration["id"],
+            message_id,
+        )
+        return jsonify({"error": "Failed to send draft"}), 502
+
+    if sent.get("id"):
+        hydrate_message_bodies.delay(integration["id"], [sent["id"]])
+    sync_gmail_history_delta.delay(integration["id"])
     return jsonify(sent), 201
 
 

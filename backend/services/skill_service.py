@@ -22,6 +22,9 @@ STORAGE_BUCKET = "skills"
 MAX_SKILLS_IN_PROMPT = 50
 MAX_SKILLS_PROMPT_CHARS = 15_000
 DEFAULT_ONBOARDING_SKILL_NAME = "guided-onboarding-account-setup"
+FINANCE_INBOX_TRIAGE_SKILL_NAME = "finance-inbox-triage"
+FLOAT_SPEND_OVERVIEW_SKILL_NAME = "float-spend-overview-cfo"
+SKILL_CREATOR_PLANNER_NAME = "skill-creator-planner"
 AUTOMATION_FRONTMATTER_KEYS = {
     "enabled",
     "schedule_enabled",
@@ -116,6 +119,225 @@ DEFAULT_ONBOARDING_SKILL_CONTENT = dedent(
     - Keep guidance practical and concise.
     - Prefer numbered steps and checklists over long paragraphs.
     - Ask one setup question at a time during onboarding.
+    """
+)
+
+FINANCE_INBOX_TRIAGE_SKILL_CONTENT = dedent(
+    """\
+    ---
+    name: finance-inbox-triage
+    description: Triages finance-related inbox messages into needs action, important review, updates, and non-urgent. Use when user asks to prioritize finance emails.
+    ---
+
+    # Finance Inbox Triage
+
+    ## Goal
+    Review the user's finance-related inbox items and classify each message into exactly one bucket:
+    1. needs action
+    2. important review
+    3. updates
+    4. non-urgent
+
+    ## Inputs and tools
+    - Use `gmail_list_messages` to fetch relevant recent messages.
+    - Use `gmail_get_message` for any message that needs deeper inspection.
+    - Prefer local cache reads first. If data looks stale, request a refresh using `gmail_refresh_local_emails` and continue once available.
+
+    ## Triage rules
+    Classify with these default rules unless the user gives overrides:
+
+    - **needs action**
+      - Requires a direct response, approval, payment, filing, or deadline-driven task.
+      - Examples: overdue invoice notices, approval requests, missing-doc requests, tax/payment reminders.
+      - High urgency or clear "you must do X" language.
+
+    - **important review**
+      - No immediate action required, but financially meaningful and should be reviewed soon.
+      - Examples: large bills, unusual charges, monthly statements, contract/pricing changes.
+
+    - **updates**
+      - Informational finance updates with low risk and no immediate action.
+      - Examples: receipt confirmations, successful payment notifications, status updates.
+
+    - **non-urgent**
+      - Low-value, promotional, repetitive, or not materially relevant to finance decisions.
+      - Examples: newsletters, marketing offers, generic announcements.
+
+    ## Output format
+    - Return a concise triage summary grouped by bucket.
+    - For each email include: subject, sender, date, and one-line reason for classification.
+    - Keep ordering by priority:
+      1) needs action
+      2) important review
+      3) updates
+      4) non-urgent
+    - If `needs action` contains items, add a short "Suggested next actions" list.
+    - If no relevant messages are found, say so and suggest broadening the query window.
+
+    ## Safety and confidence
+    - Do not fabricate missing details.
+    - If confidence is low for an item, flag it as "needs manual check" and explain why.
+    - Prefer conservative escalation: when uncertain between `updates` and `important review`, choose `important review`.
+    """
+)
+
+FLOAT_SPEND_OVERVIEW_SKILL_CONTENT = dedent(
+    """\
+    ---
+    name: float-spend-overview-cfo
+    description: Builds a CFO-level Float spend overview across bills, account/card transactions, and reimbursements with week-over-week and month-over-month movement analysis.
+    ---
+
+    # Float Spend Overview (CFO)
+
+    ## Goal
+    Produce an executive-ready spend summary that explains:
+    - where money is going,
+    - how spend changed week over week,
+    - how spend changed month over month,
+    - the biggest movers over the last week and the last 3 months.
+
+    Include spend across:
+    - bill payments (`float_bill_payments`)
+    - card transactions (`float_card_transactions`)
+    - account transactions (`float_account_transactions`)
+    - reimbursements (`float_reimbursements`)
+
+    ## Required output sections
+    1. Executive summary (5-8 bullets)
+    2. Top 25 vendors table (week-over-week view)
+    3. Top 25 users table (week-over-week view)
+    4. Biggest movers week-over-week (up and down)
+    5. Last 3 months trend and biggest movers month-over-month
+    6. Risks / watchouts and recommended actions
+
+    ## Data collection process
+    1. Define analysis windows:
+       - current week to date
+       - prior comparable week
+       - current month to date
+       - prior month comparable period
+       - trailing 3 full months
+    2. Pull data using Float tools for each window.
+    3. If tool responses are paginated (especially card transactions), request additional pages until enough coverage is collected.
+    4. Normalize into common fields:
+       - date
+       - amount (positive spend in absolute terms)
+       - currency
+       - source_type (card/account/bill/reimbursement)
+       - vendor (merchant_name, vendor_external_id, or best available label)
+       - user (spender, submitter_email, or closest owner)
+    5. Exclude obvious non-spend inflows/credits when preparing spend totals.
+
+    ## Metric definitions
+    - WoW change = current_week_spend - prior_week_spend
+    - WoW change % = WoW change / max(prior_week_spend, small_baseline)
+    - MoM change = current_month_spend - prior_month_spend
+    - MoM change % = MoM change / max(prior_month_spend, small_baseline)
+    - Use `small_baseline` to avoid divide-by-zero explosions and clearly note when prior period was near zero.
+
+    ## Table requirements
+    Output markdown tables with readable currency formatting.
+
+    ### Top 25 vendors (WoW)
+    Columns:
+    - Rank
+    - Vendor
+    - Current Week Spend
+    - Prior Week Spend
+    - WoW Delta
+    - WoW Delta %
+    - Share of Current Week Spend
+    - Primary Spend Type (card/bill/account/reimbursement)
+
+    ### Top 25 users (WoW)
+    Columns:
+    - Rank
+    - User
+    - Current Week Spend
+    - Prior Week Spend
+    - WoW Delta
+    - WoW Delta %
+    - Share of Current Week Spend
+    - Dominant Spend Category/Type
+
+    ## Biggest movers
+    Provide two concise lists for each period:
+    - Biggest increases
+    - Biggest decreases
+    For each mover include:
+    - name (vendor or user)
+    - absolute change
+    - percent change
+    - likely driver (if inferable from available metadata)
+
+    ## CFO narrative style
+    - Keep language business-focused, not tool-focused.
+    - Highlight concentration risk (top vendors/users share).
+    - Flag anomalies, one-off spikes, and sustained trends separately.
+    - End with 3-5 clear actions a CFO can take this week.
+
+    ## Data quality guardrails
+    - If coverage is incomplete (pagination limits, missing vendor/user fields, mixed currencies), state limitations explicitly before conclusions.
+    - Do not fabricate vendor or user names.
+    - When confidence is low, label findings as directional.
+    """
+)
+
+SKILL_CREATOR_PLANNER_CONTENT = dedent(
+    """\
+    ---
+    name: skill-creator-planner
+    description: Runs a structured interview to design a new skill, then creates it in-app using the skill_create tool after user confirmation.
+    ---
+
+    # Skill Creator Planner
+
+    ## Goal
+    Help the user create a high-quality new skill by:
+    1. asking a short sequence of planning questions,
+    2. drafting the skill content,
+    3. confirming with the user,
+    4. creating the skill using `skill_create`.
+
+    ## Process
+    Ask questions one step at a time. Keep questions concise and practical.
+
+    ### Step 1: Clarify purpose
+    Collect:
+    - primary outcome of the skill
+    - who/what it should help with
+    - when it should be triggered or used
+    - what "good output" looks like
+
+    ### Step 2: Gather operational details
+    Collect:
+    - required tools and data sources
+    - constraints, edge cases, and exclusions
+    - desired output format (tables, bullets, checklist, etc.)
+    - confidence/safety requirements
+
+    ### Step 3: Define metadata
+    Propose:
+    - skill slug name (lowercase kebab/underscore style)
+    - one-sentence description
+    - enabled/disabled default
+    - optional schedule/trigger settings
+
+    ### Step 4: Draft and confirm
+    - Produce a complete SKILL.md draft with frontmatter and instructions.
+    - Ask for explicit confirmation: "Create this skill now?"
+    - Do not call `skill_create` without confirmation.
+
+    ### Step 5: Create the skill
+    After confirmation:
+    - Call `skill_create` with the final name/content and automation settings.
+    - Return creation status and a short "how to use this skill" note.
+
+    ## Output style
+    - Be collaborative and concise.
+    - Ask one question at a time when requirements are incomplete.
+    - When enough detail exists, switch from questions to a concrete draft quickly.
     """
 )
 
@@ -379,6 +601,42 @@ def ensure_default_onboarding_skill(user_id: str) -> None:
         user_id=user_id,
         skill_name=DEFAULT_ONBOARDING_SKILL_NAME,
         content=DEFAULT_ONBOARDING_SKILL_CONTENT,
+        automation={"enabled": True},
+    )
+
+
+def ensure_default_finance_triage_skill(user_id: str) -> None:
+    """Create the default finance inbox triage skill when it is missing."""
+    if get_skill(user_id, FINANCE_INBOX_TRIAGE_SKILL_NAME) is not None:
+        return
+    save_skill(
+        user_id=user_id,
+        skill_name=FINANCE_INBOX_TRIAGE_SKILL_NAME,
+        content=FINANCE_INBOX_TRIAGE_SKILL_CONTENT,
+        automation={"enabled": True},
+    )
+
+
+def ensure_default_float_spend_overview_skill(user_id: str) -> None:
+    """Create the default Float spend overview skill when it is missing."""
+    if get_skill(user_id, FLOAT_SPEND_OVERVIEW_SKILL_NAME) is not None:
+        return
+    save_skill(
+        user_id=user_id,
+        skill_name=FLOAT_SPEND_OVERVIEW_SKILL_NAME,
+        content=FLOAT_SPEND_OVERVIEW_SKILL_CONTENT,
+        automation={"enabled": True},
+    )
+
+
+def ensure_default_skill_creator_planner_skill(user_id: str) -> None:
+    """Create the default skill creator planner skill when it is missing."""
+    if get_skill(user_id, SKILL_CREATOR_PLANNER_NAME) is not None:
+        return
+    save_skill(
+        user_id=user_id,
+        skill_name=SKILL_CREATOR_PLANNER_NAME,
+        content=SKILL_CREATOR_PLANNER_CONTENT,
         automation={"enabled": True},
     )
 

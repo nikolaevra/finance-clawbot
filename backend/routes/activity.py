@@ -1,29 +1,18 @@
-"""Activity SSE endpoint for real-time system activity.
-
-The frontend opens an EventSource connection to this endpoint.  Events are
-pushed to per-user Redis lists by Gateway / Lobster workers.  A Redis
-Pub/Sub notification wakes the SSE generator so events are delivered with
-near-zero latency.
-"""
+"""Activity SSE endpoint backed by durable audit log records."""
 from __future__ import annotations
 
 import json
-import logging
 import time
 
-import redis
 from flask import Blueprint, Response, g, request, stream_with_context
 
-from config import Config
 from middleware.auth import require_auth
-from services.event_bus import get_events_since, notify_channel
-
-log = logging.getLogger(__name__)
+from services.audit_log_service import fetch_activity_events_since
 
 activity_bp = Blueprint("activity", __name__)
 
 _HEARTBEAT_INTERVAL = 15   # seconds between SSE keep-alive comments
-_PUBSUB_TIMEOUT = 1        # seconds to block on Redis Pub/Sub per iteration
+_POLL_INTERVAL = 1.0       # seconds between DB polling iterations
 
 
 @activity_bp.route("/activity/events", methods=["GET"])
@@ -39,38 +28,39 @@ def activity_events():
     user_id = g.user_id
 
     def generate():
-        events, cursor = get_events_since(user_id, initial_cursor)
-        yield f"event: activity\ndata: {json.dumps({'events': events, 'cursor': cursor})}\n\n"
+        # Match prior semantics: cursor=-1 means "start fresh now".
+        cursor = max(initial_cursor, 0)
+        last_seen = None
+        if initial_cursor < 0:
+            yield f"event: activity\ndata: {json.dumps({'events': [], 'cursor': cursor})}\n\n"
+        else:
+            bootstrap_events = fetch_activity_events_since(user_id=user_id, limit=200)
+            if bootstrap_events:
+                last_seen = bootstrap_events[-1].get("timestamp")
+                cursor += len(bootstrap_events)
+            yield f"event: activity\ndata: {json.dumps({'events': bootstrap_events, 'cursor': cursor})}\n\n"
 
-        client = redis.Redis.from_url(
-            Config.CELERY_BROKER_URL, decode_responses=True
-        )
-        pubsub = client.pubsub()
-        channel = notify_channel(user_id)
-        pubsub.subscribe(channel)
+        last_heartbeat = time.monotonic()
+        while True:
+            now = time.monotonic()
+            events = fetch_activity_events_since(
+                user_id=user_id,
+                after_occurred_at=last_seen,
+                limit=200,
+            )
+            if events:
+                last_seen = events[-1].get("timestamp")
+                cursor += len(events)
+                yield (
+                    f"event: activity\n"
+                    f"data: {json.dumps({'events': events, 'cursor': cursor})}\n\n"
+                )
 
-        try:
-            last_heartbeat = time.monotonic()
+            if now - last_heartbeat >= _HEARTBEAT_INTERVAL:
+                yield ": heartbeat\n\n"
+                last_heartbeat = now
 
-            while True:
-                msg = pubsub.get_message(timeout=_PUBSUB_TIMEOUT)
-                now = time.monotonic()
-
-                if msg and msg["type"] == "message":
-                    events, cursor = get_events_since(user_id, cursor)
-                    if events:
-                        yield (
-                            f"event: activity\n"
-                            f"data: {json.dumps({'events': events, 'cursor': cursor})}\n\n"
-                        )
-
-                if now - last_heartbeat >= _HEARTBEAT_INTERVAL:
-                    yield ": heartbeat\n\n"
-                    last_heartbeat = now
-        finally:
-            pubsub.unsubscribe(channel)
-            pubsub.close()
-            client.close()
+            time.sleep(_POLL_INTERVAL)
 
     return Response(
         stream_with_context(generate()),

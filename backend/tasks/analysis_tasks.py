@@ -49,7 +49,7 @@ def _fetch_live_transactions(user_id: str, days: int = 30, limit: int = 200) -> 
         return []
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
-    raw = fetch_transactions(token, modified_after=cutoff)
+    raw = fetch_transactions(token, modified_after=cutoff, user_id=user_id)
 
     txns = []
     for t in raw[:limit]:
@@ -190,7 +190,7 @@ def generate_financial_summary(user_id: str, input_data: dict | None = None) -> 
         return {"report": "No active accounting integration found.", "period_days": days}
 
     try:
-        raw_accounts = fetch_accounts(token)
+        raw_accounts = fetch_accounts(token, user_id=user_id)
     except Exception:
         raw_accounts = []
 

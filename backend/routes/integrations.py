@@ -30,6 +30,7 @@ from services.merge_service import (
     delete_account,
 )
 from services.float_service import validate_token as float_validate_token
+from services.audit_log_service import log_gmail_inbound
 
 integrations_bp = Blueprint("integrations", __name__)
 
@@ -89,7 +90,7 @@ def create_integration():
     log.info("create_integration_start user=%s provider=%s", g.user_id, provider)
 
     try:
-        token_data = exchange_public_token(public_token)
+        token_data = exchange_public_token(public_token, user_id=g.user_id)
     except Exception as e:
         log.exception("Token exchange failed for user=%s", g.user_id)
         return jsonify({"error": f"Token exchange failed: {e}"}), 502
@@ -132,7 +133,7 @@ def connect_float():
         return jsonify({"error": "api_token is required"}), 400
 
     log.info("connect_float_start user=%s", g.user_id)
-    if not float_validate_token(api_token):
+    if not float_validate_token(api_token, user_id=g.user_id):
         log.warning("connect_float_invalid_token user=%s", g.user_id)
         return jsonify({"error": "Invalid Float API token"}), 401
 
@@ -280,10 +281,22 @@ def gmail_webhook():
         message_id = event.get("message_id")
         if not message_id:
             continue
+        event_id = f"gmail:{row['id']}:{message_id}"
+        log_gmail_inbound(
+            user_id=row["user_id"],
+            integration_id=row["id"],
+            event_id=event_id,
+            details={
+                "message_id": message_id,
+                "thread_id": event.get("thread_id"),
+                "subject": event.get("subject"),
+                "from": event.get("from"),
+            },
+        )
         dispatch = dispatch_trigger_event(
             provider="gmail",
             event="new_email",
-            event_id=f"gmail:{row['id']}:{message_id}",
+            event_id=event_id,
             payload=event,
             user_id=row["user_id"],
         )
@@ -330,7 +343,7 @@ def disconnect_integration(integration_id: str):
 
     if provider in ("quickbooks", "netsuite"):
         log.info("disconnect_integration_remote_delete user=%s provider=%s integration_id=%s", g.user_id, provider, integration_id)
-        delete_account(account_token)
+        delete_account(account_token, user_id=g.user_id)
 
     sb.table("integrations").update({
         "status": "disconnected",

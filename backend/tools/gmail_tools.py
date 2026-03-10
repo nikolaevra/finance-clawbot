@@ -97,6 +97,21 @@ def _enqueue_delta_sync(integration_id: str) -> bool:
         return False
 
 
+def _enqueue_message_hydration(integration_id: str, message_id: str) -> bool:
+    try:
+        from tasks.email_sync_tasks import hydrate_message_bodies
+
+        hydrate_message_bodies.delay(integration_id, [message_id])
+        return True
+    except Exception:
+        log.exception(
+            "gmail message hydration enqueue failed integration_id=%s message_id=%s",
+            integration_id,
+            message_id,
+        )
+        return False
+
+
 def _search_local_messages(
     integration_id: str,
     query: str,
@@ -223,6 +238,42 @@ def _get_local_message(integration_id: str, message_id: str) -> dict | None:
     }
 
 
+def _apply_local_label_update(
+    integration_id: str,
+    message_id: str,
+    add_label_ids: list[str] | None = None,
+    remove_label_ids: list[str] | None = None,
+) -> list[str]:
+    sb = get_supabase()
+    rows = (
+        sb.table("emails")
+        .select("label_ids_json")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration_id)
+        .eq("gmail_message_id", message_id)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+    ).data or []
+    current_labels = list(rows[0].get("label_ids_json") or []) if rows else []
+    for label in add_label_ids or []:
+        if label and label not in current_labels:
+            current_labels.append(label)
+    if remove_label_ids:
+        current_labels = [label for label in current_labels if label not in set(remove_label_ids)]
+
+    sb.table("emails").update(
+        {
+            "label_ids_json": current_labels,
+            "is_read": "UNREAD" not in current_labels,
+            "is_sent": "SENT" in current_labels,
+            "is_draft": "DRAFT" in current_labels,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).eq("integration_id", integration_id).eq("gmail_message_id", message_id).execute()
+    return current_labels
+
+
 # ── gmail_list_messages ──────────────────────────────────────────────
 
 
@@ -260,10 +311,7 @@ def _get_local_message(integration_id: str, message_id: str) -> dict | None:
             },
             "source": {
                 "type": "string",
-                "description": (
-                    "Read source: 'auto' (default, local cache first with remote fallback), "
-                    "'local' (cache only), or 'remote' (Gmail API)."
-                ),
+                "description": "Deprecated. Gmail tools read from local cache only.",
             },
             "refresh_local": {
                 "type": "boolean",
@@ -289,45 +337,20 @@ def gmail_list_messages(
         log.warning("gmail_list_messages aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_list_messages"}
 
-    source = (source or "auto").lower()
     sync_enqueued = _enqueue_delta_sync(integration["id"]) if refresh_local else False
-
-    if source in ("auto", "local"):
-        try:
-            messages = _search_local_messages(integration["id"], query, label_ids, max_results)
-            if source == "local" or messages:
-                return {
-                    "tool_used": "gmail_list_messages",
-                    "source": "Local cache",
-                    "query": query,
-                    "total_results": len(messages),
-                    "messages": messages,
-                    "sync_enqueued": sync_enqueued,
-                }
-        except Exception:
-            log.exception("gmail_list_messages local cache query failed")
-            if source == "local":
-                return {"error": "Local inbox cache query failed", "tool_used": "gmail_list_messages"}
-
-    creds = integration["account_token"]
     try:
-        messages = gmail_service.list_messages(
-            creds,
-            query=query,
-            label_ids=label_ids,
-            max_results=max_results,
-        )
-        log.info("gmail_list_messages success count=%d", len(messages))
+        messages = _search_local_messages(integration["id"], query, label_ids, max_results)
+        log.info("gmail_list_messages local success count=%d", len(messages))
         return {
             "tool_used": "gmail_list_messages",
-            "source": "Gmail API",
+            "source": "Local cache",
             "query": query,
             "total_results": len(messages),
             "messages": messages,
             "sync_enqueued": sync_enqueued,
         }
     except Exception as e:
-        log.exception("gmail_list_messages failed")
+        log.exception("gmail_list_messages local cache query failed")
         return {"error": str(e), "tool_used": "gmail_list_messages"}
 
 
@@ -352,10 +375,7 @@ def gmail_list_messages(
             },
             "source": {
                 "type": "string",
-                "description": (
-                    "Read source: 'auto' (default, local cache first with remote fallback), "
-                    "'local' (cache only), or 'remote' (Gmail API)."
-                ),
+                "description": "Deprecated. Gmail tools read from local cache only.",
             },
             "refresh_local": {
                 "type": "boolean",
@@ -372,38 +392,19 @@ def gmail_get_message(message_id: str, source: str = "auto", refresh_local: bool
         log.warning("gmail_get_message aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_get_message"}
 
-    source = (source or "auto").lower()
     sync_enqueued = _enqueue_delta_sync(integration["id"]) if refresh_local else False
-
-    if source in ("auto", "local"):
-        try:
-            msg = _get_local_message(integration["id"], message_id)
-            if msg:
-                return {
-                    "tool_used": "gmail_get_message",
-                    "source": "Local cache",
-                    "message": msg,
-                    "sync_enqueued": sync_enqueued,
-                }
-            if source == "local":
-                return {
-                    "tool_used": "gmail_get_message",
-                    "source": "Local cache",
-                    "error": "Message not found in local cache yet. Try refresh_local=true or source='remote'.",
-                    "sync_enqueued": sync_enqueued,
-                }
-        except Exception:
-            log.exception("gmail_get_message local cache query failed id=%s", message_id)
-            if source == "local":
-                return {"error": "Local inbox cache query failed", "tool_used": "gmail_get_message"}
-
-    creds = integration["account_token"]
     try:
-        msg = gmail_service.get_message(creds, message_id)
-        log.info("gmail_get_message success id=%s subject=%r", message_id, msg.get("subject"))
+        msg = _get_local_message(integration["id"], message_id)
+        if not msg:
+            return {
+                "tool_used": "gmail_get_message",
+                "source": "Local cache",
+                "error": "Message not found in local cache yet. Try refresh_local=true and retry shortly.",
+                "sync_enqueued": sync_enqueued,
+            }
         return {
             "tool_used": "gmail_get_message",
-            "source": "Gmail API",
+            "source": "Local cache",
             "message": msg,
             "sync_enqueued": sync_enqueued,
         }
@@ -518,22 +519,30 @@ def gmail_send_message(
     cc: str = "",
 ) -> dict:
     log.info("gmail_send_message called to=%r subject=%r cc=%r", to, subject, cc)
-    creds = _get_gmail_credentials()
-    if not creds:
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_send_message aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_send_message"}
 
     try:
         result = gmail_service.send_message(
-            creds, to=to, subject=subject, body=body, cc=cc,
+            integration["account_token"], to=to, subject=subject, body=body, cc=cc,
+        )
+        sync_enqueued = _enqueue_delta_sync(integration["id"])
+        hydrated = (
+            _enqueue_message_hydration(integration["id"], result["id"])
+            if result.get("id")
+            else False
         )
         log.info("gmail_send_message success id=%s", result.get("id"))
         return {
             "tool_used": "gmail_send_message",
-            "source": "Gmail API",
+            "source": "In-app Gmail integration",
             "status": "sent",
             "message_id": result.get("id"),
             "thread_id": result.get("threadId"),
+            "sync_enqueued": sync_enqueued,
+            "hydration_enqueued": hydrated,
         }
     except Exception as e:
         log.exception("gmail_send_message failed")
@@ -583,23 +592,31 @@ def gmail_create_draft(
     cc: str = "",
 ) -> dict:
     log.info("gmail_create_draft called to=%r subject=%r cc=%r", to, subject, cc)
-    creds = _get_gmail_credentials()
-    if not creds:
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_create_draft aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_create_draft"}
 
     try:
         result = gmail_service.create_draft(
-            creds, to=to, subject=subject, body=body, cc=cc,
+            integration["account_token"], to=to, subject=subject, body=body, cc=cc,
+        )
+        sync_enqueued = _enqueue_delta_sync(integration["id"])
+        hydrated = (
+            _enqueue_message_hydration(integration["id"], result["message_id"])
+            if result.get("message_id")
+            else False
         )
         log.info("gmail_create_draft success draft_id=%s", result.get("id"))
         return {
             "tool_used": "gmail_create_draft",
-            "source": "Gmail API",
+            "source": "In-app Gmail integration",
             "status": "draft_created",
             "draft_id": result.get("id"),
             "message_id": result.get("message_id"),
             "thread_id": result.get("thread_id"),
+            "sync_enqueued": sync_enqueued,
+            "hydration_enqueued": hydrated,
         }
     except Exception as e:
         log.exception("gmail_create_draft failed")
@@ -646,22 +663,30 @@ def gmail_reply_message(
     cc: str = "",
 ) -> dict:
     log.info("gmail_reply_message called id=%s cc=%r", message_id, cc)
-    creds = _get_gmail_credentials()
-    if not creds:
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_reply_message aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_reply_message"}
 
     try:
         result = gmail_service.reply_message(
-            creds, message_id=message_id, body=body, cc=cc,
+            integration["account_token"], message_id=message_id, body=body, cc=cc,
+        )
+        sync_enqueued = _enqueue_delta_sync(integration["id"])
+        hydrated = (
+            _enqueue_message_hydration(integration["id"], result["id"])
+            if result.get("id")
+            else False
         )
         log.info("gmail_reply_message success id=%s", result.get("id"))
         return {
             "tool_used": "gmail_reply_message",
-            "source": "Gmail API",
+            "source": "In-app Gmail integration",
             "status": "sent",
             "message_id": result.get("id"),
             "thread_id": result.get("threadId"),
+            "sync_enqueued": sync_enqueued,
+            "hydration_enqueued": hydrated,
         }
     except Exception as e:
         log.exception("gmail_reply_message failed id=%s", message_id)
@@ -714,22 +739,30 @@ def gmail_forward_message(
     cc: str = "",
 ) -> dict:
     log.info("gmail_forward_message called id=%s to=%r cc=%r", message_id, to, cc)
-    creds = _get_gmail_credentials()
-    if not creds:
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_forward_message aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_forward_message"}
 
     try:
         result = gmail_service.forward_message(
-            creds, message_id=message_id, to=to, body=body, cc=cc,
+            integration["account_token"], message_id=message_id, to=to, body=body, cc=cc,
+        )
+        sync_enqueued = _enqueue_delta_sync(integration["id"])
+        hydrated = (
+            _enqueue_message_hydration(integration["id"], result["id"])
+            if result.get("id")
+            else False
         )
         log.info("gmail_forward_message success id=%s", result.get("id"))
         return {
             "tool_used": "gmail_forward_message",
-            "source": "Gmail API",
+            "source": "In-app Gmail integration",
             "status": "sent",
             "message_id": result.get("id"),
             "thread_id": result.get("threadId"),
+            "sync_enqueued": sync_enqueued,
+            "hydration_enqueued": hydrated,
         }
     except Exception as e:
         log.exception("gmail_forward_message failed id=%s", message_id)
@@ -781,14 +814,14 @@ def gmail_modify_labels(
     remove_label_ids: list[str] | None = None,
 ) -> dict:
     log.info("gmail_modify_labels called id=%s add=%s remove=%s", message_id, add_label_ids, remove_label_ids)
-    creds = _get_gmail_credentials()
-    if not creds:
+    integration = _get_gmail_integration()
+    if not integration:
         log.warning("gmail_modify_labels aborted — no credentials")
         return {**_NO_GMAIL, "tool_used": "gmail_modify_labels"}
 
     try:
         result = gmail_service.modify_labels(
-            creds,
+            integration["account_token"],
             message_id=message_id,
             add_label_ids=add_label_ids,
             remove_label_ids=remove_label_ids,
@@ -796,12 +829,20 @@ def gmail_modify_labels(
         if "error" in result:
             log.warning("gmail_modify_labels returned error: %s", result["error"])
             return {**result, "tool_used": "gmail_modify_labels"}
+        updated_labels = _apply_local_label_update(
+            integration["id"],
+            message_id,
+            add_label_ids=add_label_ids,
+            remove_label_ids=remove_label_ids,
+        )
+        sync_enqueued = _enqueue_delta_sync(integration["id"])
         log.info("gmail_modify_labels success id=%s labels=%s", message_id, result.get("labelIds"))
         return {
             "tool_used": "gmail_modify_labels",
-            "source": "Gmail API",
+            "source": "In-app Gmail integration",
             "message_id": result.get("id"),
-            "updated_labels": result.get("labelIds", []),
+            "updated_labels": updated_labels or result.get("labelIds", []),
+            "sync_enqueued": sync_enqueued,
         }
     except Exception as e:
         log.exception("gmail_modify_labels failed id=%s", message_id)

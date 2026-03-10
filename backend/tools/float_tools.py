@@ -134,6 +134,7 @@ def float_card_transactions(
             created_at_lte=created_before,
             page=page,
             page_size=page_size,
+            user_id=g.user_id,
         )
         items = data.get("items", [])
 
@@ -237,7 +238,7 @@ def float_account_transactions(
 
     try:
         items = float_service.fetch_account_transactions(
-            token, created_at_gte=created_after, created_at_lte=created_before,
+            token, created_at_gte=created_after, created_at_lte=created_before, user_id=g.user_id,
         )
         truncated = items[:limit]
 
@@ -314,7 +315,7 @@ def float_bill_payments(
 
     try:
         items = float_service.fetch_bill_payments(
-            token, created_at_gte=created_after, created_at_lte=created_before,
+            token, created_at_gte=created_after, created_at_lte=created_before, user_id=g.user_id,
         )
         truncated = items[:limit]
 
@@ -391,7 +392,7 @@ def float_reimbursements(
 
     try:
         items = float_service.fetch_reimbursements(
-            token, created_at_gte=created_after, created_at_lte=created_before,
+            token, created_at_gte=created_after, created_at_lte=created_before, user_id=g.user_id,
         )
         truncated = items[:limit]
 
@@ -455,7 +456,7 @@ def float_users(limit: int = 100) -> dict:
     limit = min(max(limit, 1), _MAX_ITEMS)
 
     try:
-        items = float_service.fetch_users(token)
+        items = float_service.fetch_users(token, user_id=g.user_id)
         truncated = items[:limit]
 
         results = []
@@ -512,7 +513,7 @@ def float_active_cards(limit: int = 100) -> dict:
     limit = min(max(limit, 1), _MAX_ITEMS)
 
     try:
-        items = float_service.fetch_cards(token, status="ACTIVE")
+        items = float_service.fetch_cards(token, status="ACTIVE", user_id=g.user_id)
         truncated = items[:limit]
 
         results = []

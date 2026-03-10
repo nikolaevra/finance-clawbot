@@ -507,6 +507,25 @@ export async function forwardInboxEmail(payload: {
   return res.json();
 }
 
+export async function sendInboxDraft(
+  messageId: string
+): Promise<{ id: string; threadId: string; labelIds: string[] }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/inbox/drafts/${encodeURIComponent(messageId)}/send`,
+    {
+      method: "POST",
+      headers,
+    }
+  );
+  if (!res.ok) {
+    await logApiFailure(`/api/inbox/drafts/${messageId}/send`, "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to send draft");
+  }
+  return res.json();
+}
+
 export async function markInboxMessageRead(
   messageId: string
 ): Promise<{ status: string }> {

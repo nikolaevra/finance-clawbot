@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from flask import g
 
 import services.gmail_service as gmail_service
 import services.skill_service as skill_service
 import routes.skills as skills_routes
+import tools.skill_tools as skill_tools
 
 
 class _FakeCredentials:
@@ -179,3 +181,92 @@ def test_automation_validation_rejects_bad_time():
     )
     assert out == {}
     assert "schedule_time" in (err or "")
+
+
+def test_ensure_default_finance_triage_skill(monkeypatch, fake_supabase):
+    monkeypatch.setattr(skill_service, "get_supabase", lambda: fake_supabase)
+    monkeypatch.setattr(skill_service, "STORAGE_BUCKET", "skills-test")
+    skill_service._bucket_ready = False
+
+    skill_service.ensure_default_finance_triage_skill("user-2")
+
+    content = skill_service.get_skill("user-2", skill_service.FINANCE_INBOX_TRIAGE_SKILL_NAME)
+    assert content is not None
+    assert "needs action" in content
+    assert "important review" in content
+    assert "updates" in content
+    assert "non-urgent" in content
+
+
+def test_ensure_default_float_spend_overview_skill(monkeypatch, fake_supabase):
+    monkeypatch.setattr(skill_service, "get_supabase", lambda: fake_supabase)
+    monkeypatch.setattr(skill_service, "STORAGE_BUCKET", "skills-test")
+    skill_service._bucket_ready = False
+
+    skill_service.ensure_default_float_spend_overview_skill("user-3")
+
+    content = skill_service.get_skill("user-3", skill_service.FLOAT_SPEND_OVERVIEW_SKILL_NAME)
+    assert content is not None
+    assert "Top 25 vendors" in content
+    assert "Top 25 users" in content
+    assert "week over week" in content.lower()
+    assert "month over month" in content.lower()
+
+
+def test_ensure_default_skill_creator_planner_skill(monkeypatch, fake_supabase):
+    monkeypatch.setattr(skill_service, "get_supabase", lambda: fake_supabase)
+    monkeypatch.setattr(skill_service, "STORAGE_BUCKET", "skills-test")
+    skill_service._bucket_ready = False
+
+    skill_service.ensure_default_skill_creator_planner_skill("user-4")
+
+    content = skill_service.get_skill("user-4", skill_service.SKILL_CREATOR_PLANNER_NAME)
+    assert content is not None
+    assert "skill_create" in content
+    assert "ask one question at a time" in content.lower()
+    assert "Create this skill now?" in content
+
+
+def test_skill_create_tool_creates_skill(monkeypatch, fake_supabase, request_context):
+    g.user_id = "user-9"
+    monkeypatch.setattr(skill_service, "get_supabase", lambda: fake_supabase)
+    monkeypatch.setattr(skill_service, "STORAGE_BUCKET", "skills-test")
+    skill_service._bucket_ready = False
+
+    out = skill_tools.skill_create(
+        name="vendor-spend-checker",
+        content=(
+            "---\n"
+            "name: vendor-spend-checker\n"
+            "description: checks vendor spend\n"
+            "---\n\n"
+            "# Vendor Spend Checker\n"
+        ),
+        enabled=True,
+    )
+
+    assert out["tool_used"] == "skill_create"
+    assert out["status"] == "created"
+    assert out["skill"]["name"] == "vendor-spend-checker"
+    assert skill_service.get_skill("user-9", "vendor-spend-checker") is not None
+
+
+def test_skill_create_tool_rejects_duplicate(monkeypatch, fake_supabase, request_context):
+    g.user_id = "user-9"
+    monkeypatch.setattr(skill_service, "get_supabase", lambda: fake_supabase)
+    monkeypatch.setattr(skill_service, "STORAGE_BUCKET", "skills-test")
+    skill_service._bucket_ready = False
+
+    skill_service.save_skill(
+        "user-9",
+        "duplicate-skill",
+        "---\nname: duplicate-skill\ndescription: a\n---\nbody",
+        {"enabled": True},
+    )
+    out = skill_tools.skill_create(
+        name="duplicate-skill",
+        content="---\nname: duplicate-skill\ndescription: b\n---\nbody",
+    )
+
+    assert out["tool_used"] == "skill_create"
+    assert "already exists" in out["error"]

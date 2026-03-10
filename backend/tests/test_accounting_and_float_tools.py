@@ -38,14 +38,14 @@ def test_accounting_tools_paths(monkeypatch, fake_supabase, request_context):
     monkeypatch.setattr(
         accounting_tools,
         "fetch_accounts",
-        lambda _token: [
+        lambda _token, user_id=None: [
             {"name": "Cash", "classification": "asset", "type": "bank", "current_balance": 1000}
         ],
     )
     monkeypatch.setattr(
         accounting_tools,
         "fetch_transactions",
-        lambda _token, modified_after=None: [
+        lambda _token, modified_after=None, user_id=None: [
             {"transaction_date": "2026-03-06", "total_amount": 25, "memo": "Coffee", "account": "Cash"}
         ],
     )

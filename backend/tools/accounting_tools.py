@@ -86,7 +86,7 @@ def accounting_list_accounts(classification: str | None = None) -> dict:
         return {**_NO_INTEGRATION, "tool_used": "accounting_list_accounts"}
 
     try:
-        raw_accounts = fetch_accounts(token)
+        raw_accounts = fetch_accounts(token, user_id=g.user_id)
     except Exception as e:
         log.exception("accounting_list_accounts fetch failed")
         return {"error": str(e), "tool_used": "accounting_list_accounts"}
@@ -184,7 +184,7 @@ def accounting_search_transactions(
     limit = min(max(limit, 1), 200)
 
     try:
-        raw_txns = fetch_transactions(token, modified_after=start_date)
+        raw_txns = fetch_transactions(token, modified_after=start_date, user_id=g.user_id)
     except Exception as e:
         log.exception("accounting_search_transactions fetch failed")
         return {"error": str(e), "tool_used": "accounting_search_transactions"}
@@ -360,6 +360,7 @@ def accounting_create_bill(
             due_date=due_date,
             currency=currency,
             memo=memo,
+            user_id=g.user_id,
         )
         model = result.get("model", {})
         return {

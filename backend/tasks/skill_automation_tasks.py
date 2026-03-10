@@ -9,6 +9,7 @@ from celery_app import celery
 from services.supabase_service import get_supabase
 from services.gateway_service import gateway
 from services.skill_service import get_skill
+from services.audit_log_service import log_skill_background
 
 log = logging.getLogger(__name__)
 
@@ -121,21 +122,73 @@ def execute_scheduled_skill_automation(skill_id: str, run_key: str) -> dict:
     )
     skill = result.data
     if not skill or not skill.get("enabled") or not skill.get("schedule_enabled"):
+        if skill and skill.get("user_id"):
+            log_skill_background(
+                user_id=skill["user_id"],
+                skill_id=skill_id,
+                skill_name=skill.get("name", "unknown"),
+                trigger_type="scheduled",
+                status="skipped",
+                details={"reason": "inactive_or_missing", "run_key": run_key},
+            )
         return {"status": "skipped", "reason": "inactive_or_missing", "skill_id": skill_id}
     if skill.get("last_scheduled_run_key") == run_key:
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill.get("name", "unknown"),
+            trigger_type="scheduled",
+            status="skipped",
+            details={"reason": "already_ran", "run_key": run_key},
+        )
         return {"status": "skipped", "reason": "already_ran", "skill_id": skill_id}
 
     sb.table("skills").update({"last_scheduled_run_key": run_key}).eq("id", skill_id).execute()
     content = get_skill(skill["user_id"], skill["name"])
     if not content:
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill["name"],
+            trigger_type="scheduled",
+            status="skipped",
+            details={"reason": "missing_content", "run_key": run_key},
+        )
         return {"status": "skipped", "reason": "missing_content", "skill_id": skill_id}
 
     conversation_id = _get_or_create_conversation_id(skill["user_id"])
     prompt = _scheduled_prompt(skill["name"], content, run_key)
-    for _ in gateway.handle_message(skill["user_id"], conversation_id, prompt):
-        pass
-    log.info("scheduled_automation_completed skill_id=%s run_key=%s", skill_id, run_key)
-    return {"status": "ok", "skill_id": skill_id, "run_key": run_key}
+    log_skill_background(
+        user_id=skill["user_id"],
+        skill_id=skill_id,
+        skill_name=skill["name"],
+        trigger_type="scheduled",
+        status="started",
+        details={"run_key": run_key, "conversation_id": conversation_id},
+    )
+    try:
+        for _ in gateway.handle_message(skill["user_id"], conversation_id, prompt):
+            pass
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill["name"],
+            trigger_type="scheduled",
+            status="ok",
+            details={"run_key": run_key, "conversation_id": conversation_id},
+        )
+        log.info("scheduled_automation_completed skill_id=%s run_key=%s", skill_id, run_key)
+        return {"status": "ok", "skill_id": skill_id, "run_key": run_key}
+    except Exception as exc:
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill["name"],
+            trigger_type="scheduled",
+            status="failed",
+            details={"run_key": run_key, "error": str(exc)},
+        )
+        raise
 
 
 @celery.task(name="tasks.skill_automation_tasks.execute_triggered_skill_automation")
@@ -153,18 +206,70 @@ def execute_triggered_skill_automation(skill_id: str, event_id: str, payload: di
     )
     skill = result.data
     if not skill or not skill.get("enabled") or not skill.get("trigger_enabled"):
+        if skill and skill.get("user_id"):
+            log_skill_background(
+                user_id=skill["user_id"],
+                skill_id=skill_id,
+                skill_name=skill.get("name", "unknown"),
+                trigger_type="triggered",
+                status="skipped",
+                details={"reason": "inactive_or_missing", "event_id": event_id},
+            )
         return {"status": "skipped", "reason": "inactive_or_missing", "skill_id": skill_id}
     if skill.get("last_trigger_event_key") == event_id:
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill.get("name", "unknown"),
+            trigger_type="triggered",
+            status="skipped",
+            details={"reason": "already_ran", "event_id": event_id},
+        )
         return {"status": "skipped", "reason": "already_ran", "skill_id": skill_id}
 
     sb.table("skills").update({"last_trigger_event_key": event_id}).eq("id", skill_id).execute()
     content = get_skill(skill["user_id"], skill["name"])
     if not content:
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill["name"],
+            trigger_type="triggered",
+            status="skipped",
+            details={"reason": "missing_content", "event_id": event_id},
+        )
         return {"status": "skipped", "reason": "missing_content", "skill_id": skill_id}
 
     conversation_id = _get_or_create_conversation_id(skill["user_id"])
     prompt = _trigger_prompt(skill["name"], content, event_id, payload or {})
-    for _ in gateway.handle_message(skill["user_id"], conversation_id, prompt):
-        pass
-    log.info("triggered_automation_completed skill_id=%s event_id=%s", skill_id, event_id)
-    return {"status": "ok", "skill_id": skill_id, "event_id": event_id}
+    log_skill_background(
+        user_id=skill["user_id"],
+        skill_id=skill_id,
+        skill_name=skill["name"],
+        trigger_type="triggered",
+        status="started",
+        details={"event_id": event_id, "conversation_id": conversation_id},
+    )
+    try:
+        for _ in gateway.handle_message(skill["user_id"], conversation_id, prompt):
+            pass
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill["name"],
+            trigger_type="triggered",
+            status="ok",
+            details={"event_id": event_id, "conversation_id": conversation_id},
+        )
+        log.info("triggered_automation_completed skill_id=%s event_id=%s", skill_id, event_id)
+        return {"status": "ok", "skill_id": skill_id, "event_id": event_id}
+    except Exception as exc:
+        log_skill_background(
+            user_id=skill["user_id"],
+            skill_id=skill_id,
+            skill_name=skill["name"],
+            trigger_type="triggered",
+            status="failed",
+            details={"event_id": event_id, "error": str(exc)},
+        )
+        raise

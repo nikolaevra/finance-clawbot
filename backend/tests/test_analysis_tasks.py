@@ -13,7 +13,7 @@ def test_fetch_live_transactions_normalizes_payload(monkeypatch):
     monkeypatch.setattr(
         analysis_tasks,
         "fetch_transactions",
-        lambda _token, modified_after=None: [
+        lambda _token, modified_after=None, user_id=None: [
             {
                 "id": "t1",
                 "transaction_date": "2026-03-06",

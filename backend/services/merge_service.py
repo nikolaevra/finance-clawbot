@@ -11,6 +11,7 @@ import time
 
 import requests
 from config import Config
+from services.audit_log_service import log_external_api_call
 
 log = logging.getLogger(__name__)
 
@@ -59,20 +60,40 @@ def create_link_token(
 
     started = time.monotonic()
     log.info("merge_create_link_token_start user=%s integration=%s", user_id, integration_slug or "picker")
-    resp = requests.post(
-        f"{ACCOUNTING_V1}/link-token",
-        headers=_headers(),
-        json=body,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    log.info("merge_create_link_token_done user=%s status=%s duration_ms=%.0f", user_id, resp.status_code, (time.monotonic() - started) * 1000)
-    return resp.json()
+    try:
+        resp = requests.post(
+            f"{ACCOUNTING_V1}/link-token",
+            headers=_headers(),
+            json=body,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        duration_ms = (time.monotonic() - started) * 1000
+        log_external_api_call(
+            user_id=user_id,
+            service="merge",
+            operation="POST /accounting/v1/link-token",
+            status="success",
+            duration_ms=duration_ms,
+            details={"status_code": resp.status_code},
+        )
+        log.info("merge_create_link_token_done user=%s status=%s duration_ms=%.0f", user_id, resp.status_code, duration_ms)
+        return resp.json()
+    except Exception as exc:
+        log_external_api_call(
+            user_id=user_id,
+            service="merge",
+            operation="POST /accounting/v1/link-token",
+            status="error",
+            duration_ms=(time.monotonic() - started) * 1000,
+            error_message=str(exc),
+        )
+        raise
 
 
 # ── Token exchange ────────────────────────────────────────────
 
-def exchange_public_token(public_token: str) -> dict:
+def exchange_public_token(public_token: str, user_id: str | None = None) -> dict:
     """
     Exchange the public_token returned by Merge Link for a
     permanent account_token.
@@ -81,33 +102,83 @@ def exchange_public_token(public_token: str) -> dict:
     """
     started = time.monotonic()
     log.info("merge_exchange_public_token_start")
-    resp = requests.get(
-        f"{ACCOUNTING_V1}/account-token/{public_token}",
-        headers=_headers(),
-        timeout=30,
-    )
-    resp.raise_for_status()
-    log.info("merge_exchange_public_token_done status=%s duration_ms=%.0f", resp.status_code, (time.monotonic() - started) * 1000)
-    return resp.json()
+    try:
+        resp = requests.get(
+            f"{ACCOUNTING_V1}/account-token/{public_token}",
+            headers=_headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        duration_ms = (time.monotonic() - started) * 1000
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation="GET /accounting/v1/account-token/{public_token}",
+                status="success",
+                duration_ms=duration_ms,
+                details={"status_code": resp.status_code},
+            )
+        log.info("merge_exchange_public_token_done status=%s duration_ms=%.0f", resp.status_code, duration_ms)
+        return resp.json()
+    except Exception as exc:
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation="GET /accounting/v1/account-token/{public_token}",
+                status="error",
+                duration_ms=(time.monotonic() - started) * 1000,
+                error_message=str(exc),
+            )
+        raise
 
 
 # ── Paginated helpers ─────────────────────────────────────────
 
-def _fetch_all_pages(url: str, account_token: str, params: dict | None = None) -> list[dict]:
+def _fetch_all_pages(
+    url: str,
+    account_token: str,
+    params: dict | None = None,
+    user_id: str | None = None,
+    operation: str | None = None,
+) -> list[dict]:
     """Generic paginated GET that follows ``next`` cursors."""
     results: list[dict] = []
     params = dict(params or {})
     # Merge uses cursor-based pagination
     page_count = 0
     started = time.monotonic()
-    while url:
-        page_count += 1
-        resp = requests.get(url, headers=_headers(account_token), params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        results.extend(data.get("results", []))
-        url = data.get("next")  # full URL or None
-        params = {}  # params are baked into the ``next`` URL
+    try:
+        while url:
+            page_count += 1
+            resp = requests.get(url, headers=_headers(account_token), params=params, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            results.extend(data.get("results", []))
+            url = data.get("next")  # full URL or None
+            params = {}  # params are baked into the ``next`` URL
+    except Exception as exc:
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation=operation or "GET paginated",
+                status="error",
+                duration_ms=(time.monotonic() - started) * 1000,
+                error_message=str(exc),
+                details={"pages": page_count, "items": len(results)},
+            )
+        raise
+    if user_id:
+        log_external_api_call(
+            user_id=user_id,
+            service="merge",
+            operation=operation or "GET paginated",
+            status="success",
+            duration_ms=(time.monotonic() - started) * 1000,
+            details={"pages": page_count, "items": len(results)},
+        )
     log.info(
         "merge_fetch_pages_done pages=%d items=%d duration_ms=%.0f",
         page_count,
@@ -119,9 +190,14 @@ def _fetch_all_pages(url: str, account_token: str, params: dict | None = None) -
 
 # ── Accounts ──────────────────────────────────────────────────
 
-def fetch_accounts(account_token: str) -> list[dict]:
+def fetch_accounts(account_token: str, user_id: str | None = None) -> list[dict]:
     """Fetch all accounts (chart of accounts) from the linked integration."""
-    return _fetch_all_pages(f"{ACCOUNTING_V1}/accounts", account_token)
+    return _fetch_all_pages(
+        f"{ACCOUNTING_V1}/accounts",
+        account_token,
+        user_id=user_id,
+        operation="GET /accounting/v1/accounts",
+    )
 
 
 # ── Transactions ──────────────────────────────────────────────
@@ -129,6 +205,7 @@ def fetch_accounts(account_token: str) -> list[dict]:
 def fetch_transactions(
     account_token: str,
     modified_after: str | None = None,
+    user_id: str | None = None,
 ) -> list[dict]:
     """
     Fetch transactions from the linked integration.
@@ -138,7 +215,13 @@ def fetch_transactions(
     params: dict[str, str] = {}
     if modified_after:
         params["modified_after"] = modified_after
-    return _fetch_all_pages(f"{ACCOUNTING_V1}/transactions", account_token, params)
+    return _fetch_all_pages(
+        f"{ACCOUNTING_V1}/transactions",
+        account_token,
+        params,
+        user_id=user_id,
+        operation="GET /accounting/v1/transactions",
+    )
 
 
 # ── Create bill ────────────────────────────────────────────────
@@ -152,6 +235,7 @@ def create_bill(
     due_date: str | None = None,
     currency: str = "USD",
     memo: str | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Create a bill (accounts-payable) in the connected accounting system.
 
@@ -179,20 +263,42 @@ def create_bill(
 
     started = time.monotonic()
     log.info("merge_create_bill_start vendor=%s items=%d", vendor_id, len(line_items))
-    resp = requests.post(
-        f"{ACCOUNTING_V1}/bills",
-        headers=_headers(account_token),
-        json={"model": model},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    log.info("merge_create_bill_done status=%s duration_ms=%.0f", resp.status_code, (time.monotonic() - started) * 1000)
-    return resp.json()
+    try:
+        resp = requests.post(
+            f"{ACCOUNTING_V1}/bills",
+            headers=_headers(account_token),
+            json={"model": model},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        duration_ms = (time.monotonic() - started) * 1000
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation="POST /accounting/v1/bills",
+                status="success",
+                duration_ms=duration_ms,
+                details={"status_code": resp.status_code},
+            )
+        log.info("merge_create_bill_done status=%s duration_ms=%.0f", resp.status_code, duration_ms)
+        return resp.json()
+    except Exception as exc:
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation="POST /accounting/v1/bills",
+                status="error",
+                duration_ms=(time.monotonic() - started) * 1000,
+                error_message=str(exc),
+            )
+        raise
 
 
 # ── Disconnect ────────────────────────────────────────────────
 
-def delete_account(account_token: str) -> bool:
+def delete_account(account_token: str, user_id: str | None = None) -> bool:
     """
     Tell Merge to delete the linked account, revoking the
     account_token.  Returns True on success.
@@ -205,8 +311,27 @@ def delete_account(account_token: str) -> bool:
             timeout=30,
         )
         resp.raise_for_status()
-        log.info("merge_delete_account_done status=%s duration_ms=%.0f", resp.status_code, (time.monotonic() - started) * 1000)
+        duration_ms = (time.monotonic() - started) * 1000
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation="POST /accounting/v1/delete-account",
+                status="success",
+                duration_ms=duration_ms,
+                details={"status_code": resp.status_code},
+            )
+        log.info("merge_delete_account_done status=%s duration_ms=%.0f", resp.status_code, duration_ms)
         return True
-    except Exception:
+    except Exception as exc:
+        if user_id:
+            log_external_api_call(
+                user_id=user_id,
+                service="merge",
+                operation="POST /accounting/v1/delete-account",
+                status="error",
+                duration_ms=(time.monotonic() - started) * 1000,
+                error_message=str(exc),
+            )
         log.exception("merge_delete_account_failed")
         return False
