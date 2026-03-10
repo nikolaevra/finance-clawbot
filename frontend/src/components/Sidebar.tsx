@@ -111,7 +111,7 @@ export default function Sidebar({
             }`}
           >
             <MessageSquare size={16} />
-            Chat
+            Agent
           </button>
         </div>
 

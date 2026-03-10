@@ -130,6 +130,7 @@ export default function DocumentsPage() {
 
       setUploading(true);
       setError(null);
+      let uploadedAny = false;
 
       for (const file of fileArray) {
         const ext = file.name.split(".").pop()?.toLowerCase();
@@ -148,6 +149,7 @@ export default function DocumentsPage() {
 
         try {
           await uploadDocument(file);
+          uploadedAny = true;
         } catch (err) {
           setError(
             err instanceof Error ? err.message : `Failed to upload ${file.name}`
@@ -156,7 +158,9 @@ export default function DocumentsPage() {
       }
 
       setUploading(false);
-      await loadDocuments();
+      if (uploadedAny) {
+        await loadDocuments();
+      }
     },
     [loadDocuments]
   );
