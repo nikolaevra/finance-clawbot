@@ -338,3 +338,45 @@ def mark_read(message_id: str):
     ).execute()
     sync_gmail_history_delta.delay(integration["id"])
     return jsonify({"status": "ok", "message": modify_result})
+
+
+@inbox_bp.route("/inbox/threads/<thread_id>/archive", methods=["POST"])
+@require_auth
+def archive_thread(thread_id: str):
+    integration = _get_gmail_integration(g.user_id)
+    if not integration:
+        return jsonify({"error": "Gmail integration not connected"}), 404
+
+    sb = get_supabase()
+    messages = (
+        sb.table("emails")
+        .select("gmail_message_id, label_ids_json")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration["id"])
+        .eq("gmail_thread_id", thread_id)
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+    if not messages:
+        return jsonify({"error": "Thread not found"}), 404
+
+    archived_count = 0
+    for row in messages:
+        message_id = row.get("gmail_message_id")
+        labels = row.get("label_ids_json") or []
+        if not message_id or "INBOX" not in labels:
+            continue
+
+        modify_labels(
+            integration["account_token"],
+            message_id=message_id,
+            remove_label_ids=["INBOX"],
+        )
+        updated_labels = [label for label in labels if label != "INBOX"]
+        sb.table("emails").update({"label_ids_json": updated_labels}).eq(
+            "integration_id", integration["id"]
+        ).eq("gmail_message_id", message_id).execute()
+        archived_count += 1
+
+    sync_gmail_history_delta.delay(integration["id"])
+    return jsonify({"status": "ok", "archived_messages": archived_count})

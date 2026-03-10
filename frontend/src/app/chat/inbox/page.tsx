@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   Inbox,
   Loader2,
   MailPlus,
@@ -15,6 +16,7 @@ import {
   fetchInboxThread,
   fetchInboxThreads,
   forwardInboxEmail,
+  archiveInboxThread,
   markInboxMessageRead,
   replyInboxEmail,
   sendInboxEmail,
@@ -46,6 +48,72 @@ function formatBytes(bytes: number): string {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function stripOuterHtmlShell(html: string): string {
+  return html
+    .replace(/<!doctype[^>]*>/gi, "")
+    .replace(/<\/?(html|head|body)[^>]*>/gi, "");
+}
+
+function buildEmailHtmlDoc(subject: string, html: string): string {
+  const safeSubject = escapeHtml(subject || "Email");
+  const content = stripOuterHtmlShell(html || "");
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeSubject}</title>
+    <style>
+      :root { color-scheme: light; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #ffffff;
+        color: #111827;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      body {
+        padding: 16px;
+        overflow-wrap: anywhere;
+      }
+      #email-root {
+        isolation: isolate;
+      }
+      #email-root img, #email-root video {
+        max-width: 100%;
+        height: auto;
+      }
+      #email-root table {
+        max-width: 100%;
+      }
+      #email-root a {
+        color: #2563eb;
+      }
+      #email-root blockquote {
+        margin: 12px 0;
+        padding-left: 12px;
+        border-left: 3px solid #d1d5db;
+      }
+      #email-root pre, #email-root code {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body><div id="email-root">${content}</div></body>
+</html>`;
+}
+
 export default function InboxPage() {
   const [activeTab, setActiveTab] = useState<InboxTab>("inbox");
   const [threads, setThreads] = useState<EmailThread[]>([]);
@@ -58,10 +126,10 @@ export default function InboxPage() {
   const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [composerMode, setComposerMode] = useState<ComposerMode>("new");
+  const [composerMode, setComposerMode] = useState<ComposerMode | null>(null);
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
@@ -78,20 +146,29 @@ export default function InboxPage() {
     setError(null);
     try {
       const data = await fetchInboxThreads(activeTab, 1, 50);
-      setThreads(data.threads || []);
-      if ((data.threads || []).length === 0) {
+      const nextThreads = data.threads || [];
+      setThreads(nextThreads);
+      if (nextThreads.length === 0) {
         setSelectedThreadId(null);
         setMessages([]);
         setAttachmentsByMessage({});
-      } else if (!selectedThreadId || !(data.threads || []).some((t) => t.gmail_thread_id === selectedThreadId)) {
-        setSelectedThreadId(data.threads[0].gmail_thread_id);
+      } else {
+        setSelectedThreadId((prevSelectedThreadId) => {
+          if (
+            prevSelectedThreadId &&
+            nextThreads.some((thread) => thread.gmail_thread_id === prevSelectedThreadId)
+          ) {
+            return prevSelectedThreadId;
+          }
+          return nextThreads[0].gmail_thread_id;
+        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load inbox");
     } finally {
       setLoadingThreads(false);
     }
-  }, [activeTab, selectedThreadId]);
+  }, [activeTab]);
 
   const loadThread = useCallback(async () => {
     if (!selectedThreadId) return;
@@ -133,7 +210,6 @@ export default function InboxPage() {
 
   const openComposer = (mode: ComposerMode) => {
     setComposerMode(mode);
-    setComposerOpen(true);
     setComposeCc("");
     if (mode === "new") {
       setComposeTo("");
@@ -152,6 +228,14 @@ export default function InboxPage() {
     setComposeTo("");
     setComposeSubject(subject.toLowerCase().startsWith("fwd:") ? subject : `Fwd: ${subject}`);
     setComposeBody("");
+  };
+
+  const closeComposer = () => {
+    setComposerMode(null);
+    setComposeBody("");
+    setComposeCc("");
+    setComposeTo("");
+    setComposeSubject("");
   };
 
   const submitComposer = async () => {
@@ -182,13 +266,26 @@ export default function InboxPage() {
           cc: composeCc || undefined,
         });
       }
-      setComposerOpen(false);
-      setComposeBody("");
+      closeComposer();
       setRefreshTick((n) => n + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send email");
     } finally {
       setSending(false);
+    }
+  };
+
+  const archiveSelectedThread = async () => {
+    if (!selectedThreadId || archiving) return;
+    setArchiving(true);
+    setError(null);
+    try {
+      await archiveInboxThread(selectedThreadId);
+      setRefreshTick((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to archive thread");
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -298,6 +395,14 @@ export default function InboxPage() {
                 <Forward size={12} />
                 Forward
               </button>
+              <button
+                onClick={archiveSelectedThread}
+                disabled={!selectedThread || archiving}
+                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.08] disabled:opacity-40"
+              >
+                {archiving ? <Loader2 size={12} className="animate-spin" /> : <Archive size={12} />}
+                Archive
+              </button>
             </div>
           </div>
 
@@ -335,9 +440,12 @@ export default function InboxPage() {
                     </p>
                   )}
                   {message.body_html_sanitized ? (
-                    <div
-                      className="mt-3 text-sm text-foreground/75 leading-6 overflow-x-auto [&_a]:text-blue-400 [&_a]:underline [&_blockquote]:border-l [&_blockquote]:border-foreground/20 [&_blockquote]:pl-3 [&_img]:max-w-full [&_img]:h-auto [&_pre]:whitespace-pre-wrap [&_table]:w-full [&_td]:align-top [&_th]:align-top"
-                      dangerouslySetInnerHTML={{ __html: message.body_html_sanitized }}
+                    <iframe
+                      title={`email-preview-${message.gmail_message_id}`}
+                      className="mt-3 w-full h-[560px] rounded-xl border border-foreground/[0.08] bg-white isolate"
+                      sandbox="allow-popups allow-popups-to-escape-sandbox"
+                      style={{ contain: "strict" }}
+                      srcDoc={buildEmailHtmlDoc(message.subject, message.body_html_sanitized)}
                     />
                   ) : (
                     <p className="text-xs text-foreground/60 mt-3 whitespace-pre-wrap">
@@ -360,67 +468,65 @@ export default function InboxPage() {
                 </article>
               ))
             )}
+
+            {composerMode && (
+              <article className="rounded-2xl ring-1 ring-blue-400/30 bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground mb-3">
+                  {composerMode === "new"
+                    ? "New Email"
+                    : composerMode === "reply"
+                    ? "Reply in Thread"
+                    : "Forward Message"}
+                </h2>
+                {(composerMode === "new" || composerMode === "forward") && (
+                  <input
+                    value={composeTo}
+                    onChange={(e) => setComposeTo(e.target.value)}
+                    placeholder="To"
+                    className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
+                  />
+                )}
+                <input
+                  value={composeCc}
+                  onChange={(e) => setComposeCc(e.target.value)}
+                  placeholder="Cc (optional)"
+                  className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
+                />
+                <input
+                  value={composeSubject}
+                  onChange={(e) => setComposeSubject(e.target.value)}
+                  placeholder="Subject"
+                  disabled={composerMode === "reply"}
+                  className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2] disabled:opacity-50"
+                />
+                <textarea
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                  placeholder="Write your message..."
+                  rows={6}
+                  className="w-full rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
+                />
+                <div className="flex justify-end gap-2 mt-4">
+                  <button
+                    onClick={closeComposer}
+                    className="rounded-lg px-3 py-2 text-sm text-foreground/70 hover:bg-foreground/[0.05]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={submitComposer}
+                    disabled={sending || !composeBody.trim()}
+                    className="inline-flex items-center gap-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Send
+                  </button>
+                </div>
+              </article>
+            )}
           </div>
         </section>
       </div>
-
-      {composerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-card ring-1 ring-foreground/[0.08] p-5">
-            <h2 className="text-sm font-semibold text-foreground mb-4">
-              {composerMode === "new"
-                ? "New Email"
-                : composerMode === "reply"
-                ? "Reply"
-                : "Forward"}
-            </h2>
-            {(composerMode === "new" || composerMode === "forward") && (
-              <input
-                value={composeTo}
-                onChange={(e) => setComposeTo(e.target.value)}
-                placeholder="To"
-                className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
-              />
-            )}
-            <input
-              value={composeCc}
-              onChange={(e) => setComposeCc(e.target.value)}
-              placeholder="Cc (optional)"
-              className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
-            />
-            <input
-              value={composeSubject}
-              onChange={(e) => setComposeSubject(e.target.value)}
-              placeholder="Subject"
-              disabled={composerMode === "reply"}
-              className="w-full mb-2 rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2] disabled:opacity-50"
-            />
-            <textarea
-              value={composeBody}
-              onChange={(e) => setComposeBody(e.target.value)}
-              placeholder="Write your message..."
-              rows={8}
-              className="w-full rounded-xl bg-foreground/[0.05] px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-foreground/[0.2]"
-            />
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => setComposerOpen(false)}
-                className="rounded-lg px-3 py-2 text-sm text-foreground/70 hover:bg-foreground/[0.05]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitComposer}
-                disabled={sending || !composeBody.trim()}
-                className="inline-flex items-center gap-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                Send
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

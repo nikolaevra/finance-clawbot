@@ -525,6 +525,25 @@ export async function markInboxMessageRead(
   return res.json();
 }
 
+export async function archiveInboxThread(
+  threadId: string
+): Promise<{ status: string; archived_messages: number }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(
+    `${API_URL}/api/inbox/threads/${encodeURIComponent(threadId)}/archive`,
+    {
+      method: "POST",
+      headers,
+    }
+  );
+  if (!res.ok) {
+    await logApiFailure(`/api/inbox/threads/${threadId}/archive`, "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to archive thread");
+  }
+  return res.json();
+}
+
 // ── Activity SSE ────────────────────────────────────────────────────
 
 export function getActivityStreamUrl(token: string): string {
