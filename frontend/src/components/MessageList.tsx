@@ -158,7 +158,7 @@ export default function MessageList({
 
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-2xl py-4">
+      <div className="mx-auto w-full max-w-5xl py-4">
         {messages.map((msg) => {
           if (
             msg.role === "assistant" &&

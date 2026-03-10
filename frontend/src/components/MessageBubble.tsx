@@ -2,6 +2,7 @@
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check, Wrench, ExternalLink, ChevronRight, ChevronDown } from "lucide-react";
@@ -285,18 +286,30 @@ export default function MessageBubble({
   }
 
   return (
-    <div className="flex justify-start px-4 py-2">
-      <div className="max-w-[85%]">
+    <div className="flex justify-start px-4 py-2.5">
+      <div className="w-full">
         {(thinking || isStreaming) && (
           <ThinkingIndicator thinking={thinking} isStreaming={isStreaming && !content} />
         )}
 
         {content ? (
-          <div className="rounded-2xl bg-foreground/[0.03] px-4 py-3 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
-            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-2.5 prose-p:leading-7 prose-ul:my-2.5 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2.5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:marker:text-foreground/40 prose-blockquote:my-3 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-3 prose-blockquote:text-foreground/75 prose-pre:my-3 prose-pre:p-0 prose-pre:bg-transparent prose-headings:my-4 prose-headings:text-foreground/90 prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
+          <div className="rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
+            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-3.5 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6 prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6 prose-li:my-1 prose-li:marker:text-foreground/45 prose-blockquote:my-4 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-4 prose-blockquote:text-foreground/75 prose-pre:my-4 prose-pre:p-0 prose-pre:bg-transparent prose-headings:mt-6 prose-headings:mb-3 prose-headings:text-foreground/90 prose-hr:my-6 prose-hr:border-foreground/[0.14] prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-thead:border-b prose-thead:border-foreground/[0.14] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-foreground/80 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:border-t prose-td:border-foreground/[0.1] prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkBreaks]}
                 components={{
+                  hr(props) {
+                    return <hr className="border-foreground/[0.14]" {...props} />;
+                  },
+                  table({ children }) {
+                    return (
+                      <div className="my-5 w-full overflow-x-auto">
+                        <table className="w-full min-w-[30rem] border-collapse">
+                          {children}
+                        </table>
+                      </div>
+                    );
+                  },
                   code({ className, children, ...props }) {
                     const match = /language-(\w+)/.exec(className || "");
                     const codeString = String(children).replace(/\n$/, "");
