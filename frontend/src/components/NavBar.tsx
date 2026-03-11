@@ -17,7 +17,7 @@ import ThemeToggle from "./ThemeToggle";
 const NAV_ITEMS = [
   { label: "Home", href: "/", icon: House },
   { label: "Inbox", href: "/chat/inbox", icon: Inbox },
-  { label: "Chat", href: "/chat", icon: MessageSquare },
+  { label: "Agents", href: "/chat", icon: MessageSquare },
   { label: "Memories", href: "/chat/memories", icon: Brain },
   { label: "Documents", href: "/chat/documents", icon: FileText },
   { label: "Automations", href: "/chat/automations", icon: Sparkles },
