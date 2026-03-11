@@ -212,11 +212,18 @@ def execute_workflow(self, run_id: str) -> dict:
     conversation_id = run.get("conversation_id")
 
     def _emit(event: dict) -> None:
+        content, thinking = _narrate_event_with_mini_model(label, event)
+        enriched_event = {
+            **event,
+            "simulated_thinking": thinking,
+            "run_id": run_id,
+            "workflow_name": workflow_name,
+            "conversation_id": conversation_id,
+        }
         publish_event(
             user_id,
-            {**event, "run_id": run_id, "workflow_name": workflow_name, "conversation_id": conversation_id},
+            enriched_event,
         )
-        content, thinking = _narrate_event_with_mini_model(label, event)
         _save_transcript_message(
             conversation_id,
             "assistant",

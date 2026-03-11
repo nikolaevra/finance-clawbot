@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
+import Link from "next/link";
 import { useActivity } from "./ActivityProvider";
 import {
   Activity,
@@ -27,16 +28,19 @@ import { approveWorkflowRun, cancelWorkflowRun } from "@/lib/api";
 import { logger } from "@/lib/logger";
 
 const HIDDEN_ACTIVITY_TYPES = new Set([
-  "workflow_start",
-  "step_start",
-  "step_complete",
-  "step_failed",
-  "step_skipped",
-  "approval_gate",
-  "workflow_complete",
-  "workflow_failed",
-  "workflow_done",
+  "agent_streaming",
+  "streaming_response",
+  "gateway_task",
+  "lobster_task",
 ]);
+
+const HIDDEN_SOURCE_KEYWORDS = ["gateway_task", "lobster_task"];
+
+function shouldHideEvent(event: ActivityEvent): boolean {
+  if (HIDDEN_ACTIVITY_TYPES.has(event.type)) return true;
+  const source = (event.source || "").toLowerCase();
+  return HIDDEN_SOURCE_KEYWORDS.some((needle) => source.includes(needle));
+}
 
 function formatTime(iso: string): string {
   try {
@@ -47,6 +51,19 @@ function formatTime(iso: string): string {
     });
   } catch {
     return "";
+  }
+}
+
+function formatVerboseValue(value: unknown): string {
+  if (value == null) return "null";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
   }
 }
 
@@ -197,6 +214,84 @@ function EventRow({ event }: { event: ActivityEvent }) {
         )}
         {event.preview?.items && event.preview.items.length > 0 && (
           <PreviewBlock items={event.preview.items} />
+        )}
+        {event.simulated_thinking && (
+          <p className="mt-1 text-[11px] text-blue-400/70 leading-relaxed italic">
+            Thinking simulation: {event.simulated_thinking}
+          </p>
+        )}
+        {(event.workflow_name || event.run_id || event.step_id || event.tool_name || event.status || event.source) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {event.workflow_name && (
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+                workflow: {event.workflow_name}
+              </span>
+            )}
+            {event.run_id && (
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+                run: {event.run_id.slice(0, 8)}
+              </span>
+            )}
+            {event.step_id && (
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+                step: {event.step_id}
+              </span>
+            )}
+            {event.tool_name && (
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+                tool: {event.tool_name}
+              </span>
+            )}
+            {event.status && (
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+                status: {event.status}
+              </span>
+            )}
+            {event.source && (
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+                source: {event.source}
+              </span>
+            )}
+          </div>
+        )}
+        {event.verbose_data && Object.keys(event.verbose_data).length > 0 && (
+          <details className="mt-1.5 rounded-lg bg-foreground/[0.03] p-2">
+            <summary className="cursor-pointer text-[10px] text-foreground/60">
+              Step metadata
+            </summary>
+            <div className="mt-1.5 space-y-1">
+              {Object.entries(event.verbose_data).map(([key, value]) => (
+                <p
+                  key={key}
+                  className="text-[10px] text-foreground/55 leading-relaxed break-all"
+                >
+                  <span className="text-foreground/40">{key}:</span>{" "}
+                  {formatVerboseValue(value)}
+                </p>
+              ))}
+            </div>
+          </details>
+        )}
+        {event.payload !== undefined && (
+          <details className="mt-1.5 rounded-lg bg-foreground/[0.03] p-2">
+            <summary className="cursor-pointer text-[10px] text-foreground/60">
+              Step payload
+            </summary>
+            <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap break-all text-[10px] text-foreground/55 leading-relaxed">
+              {formatVerboseValue(event.payload)}
+            </pre>
+          </details>
+        )}
+        {event.conversation_id && (
+          <div className="mt-1.5">
+            <Link
+              href={`/chat/${event.conversation_id}`}
+              className="inline-flex items-center rounded-md bg-blue-500/10 px-2 py-1 text-[10px] font-medium text-blue-400 hover:bg-blue-500/15"
+              title="Open the originating chat"
+            >
+              Open source chat
+            </Link>
+          </div>
         )}
       </div>
     </div>
@@ -514,7 +609,7 @@ export function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
 
 export function ActivityToggleButton() {
   const { togglePanel, isPanelOpen, events } = useActivity();
-  const visibleEvents = events.filter((e) => !HIDDEN_ACTIVITY_TYPES.has(e.type));
+  const visibleEvents = events.filter((e) => !shouldHideEvent(e));
 
   const hasRecentActivity = visibleEvents.length > 0;
 
@@ -537,7 +632,7 @@ export function ActivityToggleButton() {
 export default function ActivityPanel() {
   const { events, isConnected, togglePanel, clearEvents } = useActivity();
   const visibleEvents = useMemo(
-    () => events.filter((e) => !HIDDEN_ACTIVITY_TYPES.has(e.type)),
+    () => events.filter((e) => !shouldHideEvent(e)),
     [events]
   );
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -590,7 +685,7 @@ export default function ActivityPanel() {
           </button>
         </div>
         <p className="text-[11px] text-foreground/45 mt-0.5">
-          Gateway & Lobster events
+          Verbose automation steps and event payloads
         </p>
       </div>
 

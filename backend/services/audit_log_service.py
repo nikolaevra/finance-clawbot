@@ -29,11 +29,16 @@ def _activity_category(event_type: str) -> str:
 def _to_activity_event(row: dict[str, Any]) -> dict[str, Any]:
     details = row.get("details") or {}
     event: dict[str, Any] = {
+        "id": row.get("id"),
         "type": row.get("event_type") or "activity",
         "actor": row.get("actor") or "gateway",
         "timestamp": row.get("occurred_at") or row.get("created_at") or _now_iso(),
         "message": row.get("message") or row.get("title") or "Activity update",
+        "source": row.get("event_source"),
+        "status": row.get("status"),
     }
+    if row.get("conversation_id"):
+        event["conversation_id"] = row["conversation_id"]
     if row.get("workflow_run_id"):
         event["run_id"] = row["workflow_run_id"]
     if row.get("step_id"):
@@ -46,6 +51,16 @@ def _to_activity_event(row: dict[str, Any]) -> dict[str, Any]:
         event["detail"] = row["detail"]
     if details.get("preview"):
         event["preview"] = details.get("preview")
+    if details.get("payload") is not None:
+        event["payload"] = details.get("payload")
+    if details.get("simulated_thinking"):
+        event["simulated_thinking"] = details.get("simulated_thinking")
+    verbose_data = {
+        key: value for key, value in details.items()
+        if key not in {"preview", "payload", "simulated_thinking"}
+    }
+    if verbose_data:
+        event["verbose_data"] = verbose_data
     return event
 
 
@@ -243,8 +258,9 @@ def fetch_activity_events_since(
     query = (
         sb.table("automation_audit_log")
         .select(
-            "id, event_type, actor, occurred_at, created_at, message, title, "
-            "detail, workflow_run_id, step_id, tool_name, workflow_name, details"
+            "id, conversation_id, event_type, event_source, status, actor, "
+            "occurred_at, created_at, message, title, detail, workflow_run_id, "
+            "step_id, tool_name, workflow_name, details"
         )
         .eq("user_id", user_id)
         .order("occurred_at", desc=False)

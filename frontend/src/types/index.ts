@@ -207,9 +207,13 @@ export interface ApprovalPreviewItem {
 }
 
 export interface ActivityEvent {
+  id?: string;
   type: string;
   actor: "gateway" | "lobster";
   timestamp: string;
+  source?: string;
+  status?: string;
+  conversation_id?: string;
   run_id?: string;
   step_id?: string;
   tool_name?: string;
@@ -217,6 +221,9 @@ export interface ActivityEvent {
   message: string;
   detail?: string;
   preview?: { items: ApprovalPreviewItem[] };
+  payload?: unknown;
+  simulated_thinking?: string;
+  verbose_data?: Record<string, unknown>;
 }
 
 export interface WorkflowRun {
