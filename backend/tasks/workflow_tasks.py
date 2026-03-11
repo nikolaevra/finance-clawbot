@@ -157,7 +157,9 @@ def _narrate_event_with_mini_model(label: str, event: dict) -> tuple[str, str]:
                     "content": (
                         "You are narrating a background workflow transcript.\n"
                         "Return strict JSON with keys: content, thinking.\n"
-                        "content: one concise user-facing sentence.\n"
+                        "content: one concise user-facing sentence in valid Markdown.\n"
+                        "Use light structure only when useful (for example, emphasis or inline code), "
+                        "and avoid wrapping the full sentence in code fences.\n"
                         "thinking: one concise internal planning sentence."
                     ),
                 },

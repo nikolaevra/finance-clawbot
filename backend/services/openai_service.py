@@ -46,6 +46,17 @@ _SKILLS_INSTRUCTION = (
 )
 
 
+_MARKDOWN_RESPONSE_INSTRUCTION = (
+    "## Response Format\n"
+    "All user-facing responses must be valid GitHub-flavored Markdown.\n"
+    "Use semantic structure when helpful (headers, bullet or numbered lists, "
+    "tables, and horizontal rules).\n"
+    "Keep prose clear and scannable.\n"
+    "Do not wrap your entire response in a single triple-backtick code block "
+    "unless the user explicitly asks for raw text/code output."
+)
+
+
 def _build_runtime_context() -> str:
     """Build a runtime context block with date, time, and model info."""
     now = datetime.now(timezone.utc)
@@ -137,6 +148,12 @@ def build_messages(
                 "or use the memory_search and memory_read tools."
             ),
         })
+
+    # 7. Output format guardrail
+    messages.append({
+        'role': 'system',
+        'content': _MARKDOWN_RESPONSE_INSTRUCTION,
+    })
 
     for msg in history:
         role = msg['role']

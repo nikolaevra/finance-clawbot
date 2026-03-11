@@ -6,7 +6,7 @@ import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Copy, Check, Wrench, ExternalLink, ChevronRight, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode, type HTMLAttributes } from "react";
 import Link from "next/link";
 import type { Message, StreamingMessage, ToolMeta, SourceReference } from "@/types";
 import ThinkingIndicator from "./ThinkingIndicator";
@@ -109,6 +109,8 @@ export function oneLine(text: string, maxLen = 90): string {
   if (!cleaned) return "";
   return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
 }
+
+const MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
 
 export function toolResultPreview(toolMeta: ToolMeta | undefined, content: string): string {
   const toolName = toolMeta?.name ?? "tool";
@@ -270,13 +272,75 @@ export default function MessageBubble({
 
   const effectiveSources =
     displaySources !== undefined ? displaySources : sources;
+  const markdownHrClassName = isUser
+    ? "my-7 border-0 border-t border-white/30"
+    : "my-8 border-0 border-t border-foreground/[0.22]";
+  const markdownTableClassName = isUser
+    ? "w-full min-w-[30rem] border-collapse border border-white/30"
+    : "w-full min-w-[30rem] border-collapse border border-foreground/[0.18]";
+
+  const markdownComponents = {
+    hr(props: HTMLAttributes<HTMLHRElement>) {
+      return <hr className={markdownHrClassName} {...props} />;
+    },
+    table({ children }: { children?: ReactNode }) {
+      return (
+        <div className="my-5 w-full overflow-x-auto">
+          <table className={markdownTableClassName}>
+            {children}
+          </table>
+        </div>
+      );
+    },
+    code({
+      className,
+      children,
+      ...props
+    }: HTMLAttributes<HTMLElement> & { children?: ReactNode }) {
+      const match = /language-(\w+)/.exec(className || "");
+      const codeString = String(children).replace(/\n$/, "");
+
+      if (match) {
+        return (
+          <div className="group relative my-3 rounded-xl overflow-hidden ring-1 ring-foreground/[0.08] shadow-lg shadow-black/20">
+            <div className="flex items-center justify-between bg-foreground/[0.06] px-4 py-2 text-[11px] text-foreground/30 font-medium">
+              <span>{match[1]}</span>
+            </div>
+            <CopyButton text={codeString} />
+            <SyntaxHighlighter
+              style={oneDark}
+              language={match[1]}
+              PreTag="div"
+              customStyle={{
+                margin: 0,
+                borderRadius: 0,
+                background: "var(--card)",
+                fontSize: "12.5px",
+              }}
+            >
+              {codeString}
+            </SyntaxHighlighter>
+          </div>
+        );
+      }
+
+      return (
+        <code
+          className="rounded-md bg-foreground/[0.08] px-1.5 py-0.5 text-[13px] text-foreground/70 font-mono"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    },
+  };
 
   if (isUser) {
     return (
       <div className="flex justify-end px-4 py-1.5">
         <div className="max-w-[75%] rounded-2xl rounded-br-md bg-blue-500 px-4 py-2.5 text-white shadow-md shadow-blue-500/10">
-          <div className="prose prose-sm max-w-none leading-relaxed prose-p:my-2 prose-p:leading-7 prose-p:text-white prose-strong:text-white prose-headings:my-3 prose-headings:text-white prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:text-blue-50 prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:text-blue-50 prose-a:text-blue-100 prose-a:no-underline hover:prose-a:underline">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <div className="prose prose-sm max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-p:text-white prose-strong:text-white prose-headings:my-3 prose-headings:text-white prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:text-blue-50 prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:text-blue-50 prose-a:text-blue-100 prose-a:no-underline hover:prose-a:underline prose-hr:my-7 prose-hr:border-white/30 prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-white/30 prose-th:border prose-th:border-white/35 prose-th:px-2 prose-th:py-1 prose-th:text-left prose-th:text-white prose-td:border prose-td:border-white/25 prose-td:px-2 prose-td:py-1 prose-td:text-blue-50">
+            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={markdownComponents}>
               {content}
             </ReactMarkdown>
           </div>
@@ -294,60 +358,10 @@ export default function MessageBubble({
 
         {content ? (
           <div className="rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
-            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-3.5 prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6 prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6 prose-li:my-1 prose-li:marker:text-foreground/45 prose-blockquote:my-4 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-4 prose-blockquote:text-foreground/75 prose-pre:my-4 prose-pre:p-0 prose-pre:bg-transparent prose-headings:mt-6 prose-headings:mb-3 prose-headings:text-foreground/90 prose-hr:my-6 prose-hr:border-foreground/[0.14] prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-thead:border-b prose-thead:border-foreground/[0.14] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-foreground/80 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:border-t prose-td:border-foreground/[0.1] prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
+            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6 prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6 prose-li:my-1 prose-li:marker:text-foreground/45 prose-blockquote:my-4 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-4 prose-blockquote:text-foreground/75 prose-pre:my-4 prose-pre:p-0 prose-pre:bg-transparent prose-headings:mt-6 prose-headings:mb-3 prose-headings:text-foreground/90 prose-hr:my-8 prose-hr:border-foreground/[0.22] prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-foreground/[0.18] prose-th:border prose-th:border-foreground/[0.18] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-foreground/80 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:border prose-td:border-foreground/[0.14] prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkBreaks]}
-                components={{
-                  hr(props) {
-                    return <hr className="border-foreground/[0.14]" {...props} />;
-                  },
-                  table({ children }) {
-                    return (
-                      <div className="my-5 w-full overflow-x-auto">
-                        <table className="w-full min-w-[30rem] border-collapse">
-                          {children}
-                        </table>
-                      </div>
-                    );
-                  },
-                  code({ className, children, ...props }) {
-                    const match = /language-(\w+)/.exec(className || "");
-                    const codeString = String(children).replace(/\n$/, "");
-
-                    if (match) {
-                      return (
-                        <div className="group relative my-3 rounded-xl overflow-hidden ring-1 ring-foreground/[0.08] shadow-lg shadow-black/20">
-                          <div className="flex items-center justify-between bg-foreground/[0.06] px-4 py-2 text-[11px] text-foreground/30 font-medium">
-                            <span>{match[1]}</span>
-                          </div>
-                          <CopyButton text={codeString} />
-                          <SyntaxHighlighter
-                            style={oneDark}
-                            language={match[1]}
-                            PreTag="div"
-                            customStyle={{
-                              margin: 0,
-                              borderRadius: 0,
-                              background: "var(--card)",
-                              fontSize: "12.5px",
-                            }}
-                          >
-                            {codeString}
-                          </SyntaxHighlighter>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <code
-                        className="rounded-md bg-foreground/[0.08] px-1.5 py-0.5 text-[13px] text-foreground/70 font-mono"
-                        {...props}
-                      >
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
+                remarkPlugins={MARKDOWN_PLUGINS}
+                components={markdownComponents}
               >
                 {content}
               </ReactMarkdown>
