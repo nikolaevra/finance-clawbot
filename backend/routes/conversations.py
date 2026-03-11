@@ -12,7 +12,10 @@ def list_conversations():
     sb = get_supabase()
     result = (
         sb.table('conversations')
-        .select('id, title, created_at, updated_at')
+        .select(
+            'id, user_id, title, created_at, updated_at, '
+            'conversation_type, agent_mode, agent_source, agent_run_id, agent_name'
+        )
         .eq('user_id', g.user_id)
         .order('updated_at', desc=True)
         .execute()

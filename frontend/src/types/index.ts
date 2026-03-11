@@ -2,6 +2,11 @@ export interface Conversation {
   id: string;
   user_id: string;
   title: string;
+  conversation_type?: "live" | "background";
+  agent_mode?: "live" | "background";
+  agent_source?: string | null;
+  agent_run_id?: string | null;
+  agent_name?: string | null;
   created_at: string;
   updated_at: string;
   messages?: Message[];

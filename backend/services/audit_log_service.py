@@ -115,6 +115,7 @@ def publish_event(user_id: str, event: dict[str, Any]) -> None:
         event_type=event_type,
         event_category=_activity_category(event_type),
         event_source="activity_bridge",
+        conversation_id=event.get("conversation_id"),
         status=event.get("status"),
         actor=event.get("actor"),
         title=event.get("message") or event_type.replace("_", " ").title(),
@@ -127,7 +128,7 @@ def publish_event(user_id: str, event: dict[str, Any]) -> None:
         occurred_at=event.get("timestamp"),
         details={k: v for k, v in event.items() if k not in {
             "type", "status", "actor", "message", "detail", "run_id",
-            "workflow_name", "tool_name", "step_id", "timestamp",
+            "workflow_name", "tool_name", "step_id", "timestamp", "conversation_id",
         }},
     )
 

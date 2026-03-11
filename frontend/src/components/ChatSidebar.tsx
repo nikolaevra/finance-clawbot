@@ -139,6 +139,13 @@ function ConversationList({
         {conversations.map((conv) => {
           const isActive = conv.id === activeConversationId;
           const isDeleting = conv.id === deletingId;
+          const isBackground =
+            conv.agent_mode === "background" ||
+            conv.conversation_type === "background";
+          const agentBadge = isBackground ? "Background Agent" : "Live Agent";
+          const sourceMeta = isBackground
+            ? [conv.agent_name, conv.agent_source].filter(Boolean).join(" · ")
+            : "";
 
           return (
             <div
@@ -171,6 +178,22 @@ function ConversationList({
                 >
                   {conv.title}
                 </p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                      isBackground
+                        ? "bg-violet-500/15 text-violet-300"
+                        : "bg-blue-500/15 text-blue-300"
+                    }`}
+                  >
+                    {agentBadge}
+                  </span>
+                  {sourceMeta && (
+                    <span className="truncate text-[10px] text-foreground/30">
+                      {sourceMeta}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-0.5 text-[11px] text-foreground/25">
                   {formatRelativeTime(conv.updated_at)}
                 </p>

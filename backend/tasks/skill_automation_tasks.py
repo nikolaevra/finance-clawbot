@@ -10,6 +10,7 @@ from services.supabase_service import get_supabase
 from services.gateway_service import gateway
 from services.skill_service import get_skill
 from services.audit_log_service import log_skill_background
+from services.conversation_service import create_background_conversation
 
 log = logging.getLogger(__name__)
 
@@ -40,26 +41,6 @@ def _compute_schedule_run_key(skill: dict, now_utc: datetime) -> str | None:
             return None
 
     return f"{local_now.strftime('%Y-%m-%d')}:{schedule_time}:{schedule_type}"
-
-
-def _get_or_create_conversation_id(user_id: str) -> str:
-    sb = get_supabase()
-    existing = (
-        sb.table("conversations")
-        .select("id")
-        .eq("user_id", user_id)
-        .order("created_at", desc=False)
-        .limit(1)
-        .execute()
-    )
-    if existing.data:
-        return existing.data[0]["id"]
-    created = (
-        sb.table("conversations")
-        .insert({"user_id": user_id, "title": "Finance Assistant"})
-        .execute()
-    )
-    return created.data[0]["id"]
 
 
 def _scheduled_prompt(skill_name: str, content: str, run_key: str) -> str:
@@ -156,7 +137,12 @@ def execute_scheduled_skill_automation(skill_id: str, run_key: str) -> dict:
         )
         return {"status": "skipped", "reason": "missing_content", "skill_id": skill_id}
 
-    conversation_id = _get_or_create_conversation_id(skill["user_id"])
+    conversation_id = create_background_conversation(
+        user_id=skill["user_id"],
+        agent_name=skill["name"],
+        agent_source="skill_schedule",
+        agent_run_id=run_key,
+    )
     prompt = _scheduled_prompt(skill["name"], content, run_key)
     log_skill_background(
         user_id=skill["user_id"],
@@ -240,7 +226,12 @@ def execute_triggered_skill_automation(skill_id: str, event_id: str, payload: di
         )
         return {"status": "skipped", "reason": "missing_content", "skill_id": skill_id}
 
-    conversation_id = _get_or_create_conversation_id(skill["user_id"])
+    conversation_id = create_background_conversation(
+        user_id=skill["user_id"],
+        agent_name=skill["name"],
+        agent_source="skill_trigger",
+        agent_run_id=event_id,
+    )
     prompt = _trigger_prompt(skill["name"], content, event_id, payload or {})
     log_skill_background(
         user_id=skill["user_id"],

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.supabase_service import get_supabase
+from services.conversation_service import create_background_conversation
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,21 @@ def start_workflow(
         }
         for i, step in enumerate(steps)
     ]
+
+    if not conversation_id:
+        source = {
+            "manual": "workflow_manual",
+            "chat": "workflow_chat",
+            "scheduled": "workflow_scheduled",
+        }.get(trigger, "workflow_manual")
+        try:
+            conversation_id = create_background_conversation(
+                user_id=user_id,
+                agent_name=template.get("name", "workflow"),
+                agent_source=source,
+            )
+        except Exception:
+            log.exception("workflow_background_conversation_create_failed user=%s template=%s", user_id, template_id)
 
     run_row = {
         "user_id": user_id,

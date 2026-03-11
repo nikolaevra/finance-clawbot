@@ -13,10 +13,12 @@ import traceback
 from datetime import datetime, timezone
 
 from celery_app import celery
+from config import Config
 
 log = logging.getLogger(__name__)
 from services.supabase_service import get_supabase
 from services.audit_log_service import publish_event
+from services.openai_service import get_openai
 from services.workflow_engine import (
     _resolve_step_input,
     _evaluate_condition,
@@ -123,6 +125,65 @@ def _approval_preview(steps_state: list, current_index: int) -> dict | None:
     return {"items": preview_items} if preview_items else None
 
 
+def _save_transcript_message(
+    conversation_id: str | None,
+    role: str,
+    *,
+    content: str | None = None,
+    thinking: str | None = None,
+) -> None:
+    if not conversation_id:
+        return
+    sb = get_supabase()
+    row = {"conversation_id": conversation_id, "role": role}
+    if content is not None:
+        row["content"] = content
+    if thinking:
+        row["thinking"] = thinking
+    sb.table("messages").insert(row).execute()
+
+
+def _narrate_event_with_mini_model(label: str, event: dict) -> tuple[str, str]:
+    event_type = str(event.get("type") or "workflow_event")
+    fallback = str(event.get("message") or event_type.replace("_", " "))
+    fallback_thinking = f"Tracking workflow progress: {event_type}."
+    try:
+        client = get_openai()
+        response = client.chat.completions.create(
+            model=Config.OPENAI_MINI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are narrating a background workflow transcript.\n"
+                        "Return strict JSON with keys: content, thinking.\n"
+                        "content: one concise user-facing sentence.\n"
+                        "thinking: one concise internal planning sentence."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({
+                        "workflow_label": label,
+                        "event": event,
+                    }, default=str),
+                },
+            ],
+            max_completion_tokens=180,
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        parsed = json.loads(raw)
+        content = str(parsed.get("content") or "").strip()
+        thinking = str(parsed.get("thinking") or "").strip()
+        if not content:
+            content = fallback
+        if not thinking:
+            thinking = fallback_thinking
+        return content, thinking
+    except Exception:
+        return fallback, fallback_thinking
+
+
 @celery.task(name="tasks.workflow_tasks.execute_workflow", bind=True, max_retries=1)
 def execute_workflow(self, run_id: str) -> dict:
     """Walk through workflow steps starting from ``current_step_index``."""
@@ -148,9 +209,35 @@ def execute_workflow(self, run_id: str) -> dict:
     input_args = run.get("input_args") or {}
     current_idx = run.get("current_step_index", 0)
     user_id = run.get("user_id")
+    conversation_id = run.get("conversation_id")
 
     def _emit(event: dict) -> None:
-        publish_event(user_id, {**event, "run_id": run_id, "workflow_name": workflow_name})
+        publish_event(
+            user_id,
+            {**event, "run_id": run_id, "workflow_name": workflow_name, "conversation_id": conversation_id},
+        )
+        content, thinking = _narrate_event_with_mini_model(label, event)
+        _save_transcript_message(
+            conversation_id,
+            "assistant",
+            content=content,
+            thinking=thinking,
+        )
+        if event.get("type") in {"step_start", "step_complete", "step_failed", "step_skipped", "approval_gate"}:
+            _save_transcript_message(
+                conversation_id,
+                "tool",
+                content=json.dumps({
+                    "tool_used": "workflow_step",
+                    "run_id": run_id,
+                    "workflow_name": workflow_name,
+                    "event_type": event.get("type"),
+                    "step_id": event.get("step_id"),
+                    "detail": event.get("detail"),
+                    "message": event.get("message"),
+                    "payload": event.get("payload"),
+                }, default=str),
+            )
 
     _emit({"type": "workflow_start", "actor": "lobster",
            "message": f"Started {label} workflow ({len(template_steps)} steps)"})
@@ -182,7 +269,8 @@ def execute_workflow(self, run_id: str) -> dict:
             _update_run(sb, run_id, i, steps_state)
             _emit({"type": "step_skipped", "actor": "lobster",
                    "step_id": step_def.get("id", f"step_{i}"),
-                   "message": f"Skipped \"{step_def.get('name', step_def.get('id'))}\" (condition not met)"})
+                   "message": f"Skipped \"{step_def.get('name', step_def.get('id'))}\" (condition not met)",
+                   "payload": {"condition": step_def.get("condition")}})
             continue
 
         # --- Approval gate ---
@@ -204,7 +292,8 @@ def execute_workflow(self, run_id: str) -> dict:
                    "step_id": step_def.get("id", f"step_{i}"),
                    "message": f"Requires approval from user",
                    "detail": approval.get("prompt", "Approve this step?"),
-                   "preview": preview})
+                   "preview": preview,
+                   "payload": {"approval": approval, "preview": preview}})
             return {
                 "status": "paused",
                 "run_id": run_id,
@@ -225,15 +314,15 @@ def execute_workflow(self, run_id: str) -> dict:
         step_state["started_at"] = datetime.now(timezone.utc).isoformat()
         steps_state[i] = step_state
         _update_run(sb, run_id, i, steps_state)
-
         step_name = step_def.get("name", step_def.get("id", f"step_{i}"))
         step_id = step_def.get("id", f"step_{i}")
-        _emit({"type": "step_start", "actor": "lobster",
-               "step_id": step_id,
-               "message": f"Running: {step_name} (step {i + 1}/{len(template_steps)})"})
 
         try:
             step_input = _resolve_step_input(step_def, steps_state, input_args)
+            _emit({"type": "step_start", "actor": "lobster",
+                   "step_id": step_id,
+                   "message": f"Running: {step_name} (step {i + 1}/{len(template_steps)})",
+                   "payload": {"task": task_path, "step_input": step_input}})
             log.info("run=%s task_id=%s executing step %d task=%s", run_id, task_id or "-", i, task_path)
             result = _call_step_task(task_path, user_id, step_input)
             step_state["status"] = "completed"
@@ -247,7 +336,8 @@ def execute_workflow(self, run_id: str) -> dict:
 
             _emit({"type": "step_complete", "actor": "lobster",
                    "step_id": step_id,
-                   "message": complete_msg})
+                   "message": complete_msg,
+                   "payload": {"result": result}})
         except Exception as exc:
             log.exception("run=%s task_id=%s step %d failed task=%s", run_id, task_id or "-", i, task_path)
             step_state["status"] = "failed"
@@ -255,7 +345,8 @@ def execute_workflow(self, run_id: str) -> dict:
             steps_state[i] = step_state
             _emit({"type": "step_failed", "actor": "lobster",
                    "step_id": step_id,
-                   "message": f"Failed: {step_name} — {str(exc)[:200]}"})
+                   "message": f"Failed: {step_name} — {str(exc)[:200]}",
+                   "payload": {"error": str(exc)}})
 
             elapsed = _elapsed_str(started_at)
             sb.table("workflow_runs").update({
