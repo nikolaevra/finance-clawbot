@@ -7,6 +7,7 @@ import {
   Plus,
   Loader2,
   RefreshCw,
+  Play,
   ToggleLeft,
   ToggleRight,
   Trash2,
@@ -15,9 +16,11 @@ import {
 import { useSkills } from "@/lib/hooks/useSkills";
 import {
   createSkill,
+  createConversation,
   deleteSkill,
   toggleSkill as apiToggleSkill,
 } from "@/lib/api";
+import type { Skill } from "@/types";
 
 const DEFAULT_SKILL_TEMPLATE = `---
 name: my-new-skill
@@ -42,6 +45,57 @@ export default function SkillsPage() {
   const [newError, setNewError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [testingName, setTestingName] = useState<string | null>(null);
+
+  const WEEK_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  const formatScheduleSummary = (skill: Skill): string | null => {
+    if (!skill.schedule_enabled) return null;
+
+    const timePart = skill.schedule_time || "time not set";
+    const timezonePart = skill.schedule_timezone || "UTC";
+
+    if (skill.schedule_type === "weekly") {
+      const days = Array.isArray(skill.schedule_days)
+        ? skill.schedule_days
+            .filter((d) => d >= 0 && d <= 6)
+            .sort((a, b) => a - b)
+            .map((d) => WEEK_DAY_LABELS[d])
+        : [];
+      const dayPart = days.length > 0 ? days.join(", ") : "no weekdays selected";
+      return `Schedule: Weekly on ${dayPart} at ${timePart} (${timezonePart})`;
+    }
+
+    return `Schedule: Daily at ${timePart} (${timezonePart})`;
+  };
+
+  const formatTriggerSummary = (skill: Skill): string | null => {
+    if (!skill.trigger_enabled) return null;
+
+    const providerPart =
+      skill.trigger_provider === "gmail" ? "Gmail" : "Unknown provider";
+    const eventPart =
+      skill.trigger_event === "new_email" ? "new email" : "custom event";
+    const filters = (skill.trigger_filters || {}) as Record<string, unknown>;
+    const filterParts: string[] = [];
+
+    if (filters.inbox_only !== false) {
+      filterParts.push("inbox only");
+    }
+    if (typeof filters.from_contains === "string" && filters.from_contains.trim()) {
+      filterParts.push(`from contains "${filters.from_contains.trim()}"`);
+    }
+    if (
+      typeof filters.subject_contains === "string" &&
+      filters.subject_contains.trim()
+    ) {
+      filterParts.push(`subject contains "${filters.subject_contains.trim()}"`);
+    }
+
+    return filterParts.length > 0
+      ? `Trigger: ${providerPart} ${eventPart} (${filterParts.join(", ")})`
+      : `Trigger: ${providerPart} ${eventPart}`;
+  };
 
   const handleCreate = async () => {
     const name = newName.trim().toLowerCase().replace(/\s+/g, "-");
@@ -88,6 +142,21 @@ export default function SkillsPage() {
       /* swallow */
     } finally {
       setDeletingName(null);
+    }
+  };
+
+  const handleTryAutomation = async (skillName: string) => {
+    setTestingName(skillName);
+    try {
+      const conversation = await createConversation(`Try: ${skillName}`);
+      const prompt = `Run the "${skillName}" automation now and show me the result.`;
+      router.push(
+        `/chat/${encodeURIComponent(conversation.id)}?q=${encodeURIComponent(prompt)}&skill=${encodeURIComponent(skillName)}`
+      );
+    } catch {
+      /* swallow */
+    } finally {
+      setTestingName(null);
     }
   };
 
@@ -192,13 +261,16 @@ export default function SkillsPage() {
             </p>
           </div>
         ) : (
-          skills.map((skill) => (
-            <div
-              key={skill.id}
-              className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] p-5 transition-all hover:bg-foreground/[0.06]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
+          skills.map((skill) => {
+            const triggerSummary = formatTriggerSummary(skill);
+            const scheduleSummary = formatScheduleSummary(skill);
+            return (
+              <div
+                key={skill.id}
+                className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] p-5 transition-all hover:bg-foreground/[0.06]"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-medium text-foreground/75 font-mono">
                       {skill.name}
@@ -228,6 +300,16 @@ export default function SkillsPage() {
                       {skill.description}
                     </p>
                   )}
+                  {triggerSummary && (
+                    <p className="text-[11px] text-foreground/30 mt-1.5">
+                      {triggerSummary}
+                    </p>
+                  )}
+                  {scheduleSummary && (
+                    <p className="text-[11px] text-foreground/30 mt-1">
+                      {scheduleSummary}
+                    </p>
+                  )}
                   <p className="text-[11px] text-foreground/20 mt-2">
                     Updated{" "}
                     {new Date(skill.updated_at).toLocaleDateString(undefined, {
@@ -236,8 +318,20 @@ export default function SkillsPage() {
                       year: "numeric",
                     })}
                   </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => handleTryAutomation(skill.name)}
+                    disabled={testingName === skill.name}
+                    className="p-2 rounded-lg text-foreground/25 hover:text-blue-400/90 hover:bg-blue-400/10 disabled:opacity-50"
+                    title="Try Automation"
+                  >
+                    {testingName === skill.name ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Play size={14} strokeWidth={1.5} />
+                    )}
+                  </button>
                   <button
                     onClick={() => handleToggle(skill.name, skill.enabled)}
                     disabled={togglingId === skill.name}
@@ -278,10 +372,11 @@ export default function SkillsPage() {
                       <Trash2 size={14} strokeWidth={1.5} />
                     )}
                   </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
