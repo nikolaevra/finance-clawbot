@@ -217,7 +217,16 @@ export default function StarterHome({
           ) : (
             <div className="divide-y divide-foreground/[0.08] rounded-xl border border-foreground/[0.08]">
               {threads.map((thread) => (
-                <div key={thread.gmail_thread_id} className="px-3 py-3 md:px-4">
+                <button
+                  key={thread.gmail_thread_id}
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/chat/inbox?emailId=${encodeURIComponent(thread.gmail_thread_id)}`
+                    )
+                  }
+                  className="w-full px-3 py-3 text-left transition-colors hover:bg-foreground/[0.03] md:px-4"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -236,7 +245,7 @@ export default function StarterHome({
                       {formatThreadTime(thread.last_message_internal_at)}
                     </p>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}

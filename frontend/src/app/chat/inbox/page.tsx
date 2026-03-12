@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
+  ChevronDown,
+  ChevronRight,
   Check,
   Download,
   FolderPlus,
@@ -15,6 +18,7 @@ import {
   Reply,
   Search,
   Send,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -137,6 +141,9 @@ function getSenderLabel(thread: EmailThread): string {
 }
 
 export default function InboxPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<InboxTab>("inbox");
   const [searchQuery, setSearchQuery] = useState("");
   const [threads, setThreads] = useState<EmailThread[]>([]);
@@ -163,6 +170,8 @@ export default function InboxPage() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeCc, setComposeCc] = useState("");
+  const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+  const routeEmailId = searchParams.get("emailId");
 
   const selectedThread = useMemo(
     () => threads.find((t) => t.gmail_thread_id === activeThreadId) || null,
@@ -183,6 +192,21 @@ export default function InboxPage() {
             message.is_draft || (message.label_ids_json || []).includes("DRAFT")
         ) || null,
     [messages]
+  );
+
+  const syncInboxUrl = useCallback(
+    (emailId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (emailId) {
+        params.set("emailId", emailId);
+      } else {
+        params.delete("emailId");
+      }
+      const query = params.toString();
+      const nextUrl = query ? `${pathname}?${query}` : pathname;
+      router.push(nextUrl);
+    },
+    [pathname, router, searchParams]
   );
 
   const filteredThreads = useMemo(() => {
@@ -224,6 +248,11 @@ export default function InboxPage() {
       const data = await fetchInboxThread(threadId);
       const nextMessages = data.messages || [];
       setMessages(nextMessages);
+      setExpandedMessageId(
+        nextMessages.length
+          ? nextMessages[nextMessages.length - 1].gmail_message_id
+          : null
+      );
       setAttachmentsByMessage(data.attachments_by_message || {});
 
       const unreadIds = nextMessages
@@ -249,6 +278,14 @@ export default function InboxPage() {
   useEffect(() => {
     loadThreads();
   }, [loadThreads, refreshTick]);
+
+  useEffect(() => {
+    if (!routeEmailId) return;
+    if (activeThreadId === routeEmailId && isPreviewOpen) return;
+    closeComposer();
+    setActiveThreadId(routeEmailId);
+    setIsPreviewOpen(true);
+  }, [activeThreadId, isPreviewOpen, routeEmailId]);
 
   useEffect(() => {
     if (!isPreviewOpen || !activeThreadId) return;
@@ -306,14 +343,17 @@ export default function InboxPage() {
   };
 
   const closePreview = () => {
+    syncInboxUrl(null);
     closeComposer();
     setIsPreviewOpen(false);
     setActiveThreadId(null);
     setMessages([]);
+    setExpandedMessageId(null);
     setAttachmentsByMessage({});
   };
 
   const openThreadPreview = (threadId: string, mode: ComposerMode | null = null) => {
+    syncInboxUrl(threadId);
     setActiveThreadId(threadId);
     setIsPreviewOpen(true);
     closeComposer();
@@ -323,11 +363,17 @@ export default function InboxPage() {
   };
 
   const openNewMessageModal = () => {
+    syncInboxUrl(null);
     setActiveThreadId(null);
     setMessages([]);
+    setExpandedMessageId(null);
     setAttachmentsByMessage({});
     setIsPreviewOpen(true);
     openComposer("new");
+  };
+
+  const toggleExpandedMessage = (messageId: string) => {
+    setExpandedMessageId((current) => (current === messageId ? null : messageId));
   };
 
   const submitComposer = async () => {
@@ -633,76 +679,89 @@ export default function InboxPage() {
               className="relative flex h-full w-full flex-col overflow-hidden rounded-3xl border border-foreground/[0.12] bg-background/85 shadow-2xl backdrop-blur-xl"
             >
               <header className="sticky top-0 z-20 border-b border-foreground/[0.08] bg-background/85 px-5 py-3">
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-foreground">
-                      {selectedThread?.subject_normalized || "New message"}
-                    </p>
-                    {selectedThread && (
-                      <p className="mt-1 line-clamp-2 rounded-lg bg-blue-500/10 px-2 py-1 text-xs text-foreground/80">
-                        {selectedThread.ai_summary_preview || selectedThread.snippet || "No summary available."}
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-foreground">
+                        {selectedThread?.subject_normalized || "New message"}
                       </p>
-                    )}
-                  </div>
+                    </div>
 
-                  <div className="flex items-center gap-2">
-                    {selectedThread && (
-                      <>
-                        <button
-                          onClick={() => openComposer("reply")}
-                          disabled={!latestMessage}
-                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
-                        >
-                          <Reply size={12} />
-                          Reply
-                        </button>
-                        <button
-                          onClick={() => openComposer("forward")}
-                          disabled={!latestMessage}
-                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
-                        >
-                          <Forward size={12} />
-                          Forward
-                        </button>
-                        {(hasDraftMessages || activeTab === "drafts") && (
+                    <div className="flex items-center gap-2">
+                      {selectedThread && (
+                        <>
                           <button
-                            onClick={sendSelectedDraft}
-                            disabled={!selectedDraftMessage || sendingDraft}
+                            onClick={() => openComposer("reply")}
+                            disabled={!latestMessage}
                             className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
                           >
-                            {sendingDraft ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <Send size={12} />
-                            )}
-                            Send Draft
+                            <Reply size={12} />
+                            Reply
                           </button>
-                        )}
-                        <button
-                          onClick={() => selectedThread && archiveThread(selectedThread.gmail_thread_id)}
-                          disabled={!selectedThread || archivingThreadId === selectedThread.gmail_thread_id}
-                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
-                        >
-                          {archivingThreadId === selectedThread.gmail_thread_id ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : activeTab === "drafts" || hasDraftMessages ? (
-                            <Trash2 size={12} />
-                          ) : (
-                            <Archive size={12} />
+                          <button
+                            onClick={() => openComposer("forward")}
+                            disabled={!latestMessage}
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
+                          >
+                            <Forward size={12} />
+                            Forward
+                          </button>
+                          {(hasDraftMessages || activeTab === "drafts") && (
+                            <button
+                              onClick={sendSelectedDraft}
+                              disabled={!selectedDraftMessage || sendingDraft}
+                              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
+                            >
+                              {sendingDraft ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Send size={12} />
+                              )}
+                              Send Draft
+                            </button>
                           )}
-                          {activeTab === "drafts" || hasDraftMessages ? "Discard" : "Archive"}
-                        </button>
-                      </>
-                    )}
+                          <button
+                            onClick={() => selectedThread && archiveThread(selectedThread.gmail_thread_id)}
+                            disabled={!selectedThread || archivingThreadId === selectedThread.gmail_thread_id}
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
+                          >
+                            {archivingThreadId === selectedThread.gmail_thread_id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : activeTab === "drafts" || hasDraftMessages ? (
+                              <Trash2 size={12} />
+                            ) : (
+                              <Archive size={12} />
+                            )}
+                            {activeTab === "drafts" || hasDraftMessages ? "Discard" : "Archive"}
+                          </button>
+                        </>
+                      )}
 
-                    <button
-                      onClick={closePreview}
-                      className="rounded-lg p-1.5 text-foreground/70 hover:bg-foreground/[0.06]"
-                      aria-label="Close preview"
-                    >
-                      <X size={15} />
-                    </button>
+                      <button
+                        onClick={closePreview}
+                        className="rounded-lg p-1.5 text-foreground/70 hover:bg-foreground/[0.06]"
+                        aria-label="Close preview"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
                   </div>
+
+                  {selectedThread && (
+                    <div className="mx-auto w-full max-w-3xl rounded-2xl border border-blue-400/25 bg-[radial-gradient(ellipse_at_top,rgba(96,165,250,0.22),rgba(59,130,246,0.06)_45%,rgba(15,23,42,0.04)_100%)] px-5 py-4 shadow-[0_12px_40px_-24px_rgba(59,130,246,0.9)]">
+                      <div className="mb-2 flex items-center justify-center gap-2 text-blue-300/95">
+                        <Sparkles size={14} />
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em]">
+                          AI Thread Summary
+                        </p>
+                      </div>
+                      <p className="text-center text-sm leading-relaxed text-foreground/90">
+                        {selectedThread.ai_summary_preview ||
+                          selectedThread.snippet ||
+                          "No summary available."}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </header>
 
@@ -724,119 +783,134 @@ export default function InboxPage() {
                         key={message.gmail_message_id}
                         className="rounded-2xl border border-foreground/[0.09] bg-card/90 p-4"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">
-                              {message.from_json?.name || message.from_json?.email || "Unknown sender"}
-                            </p>
-                            {message.from_json?.email && (
-                              <p className="truncate text-xs font-mono text-foreground/65">
-                                {message.from_json.email}
-                              </p>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpandedMessage(message.gmail_message_id)}
+                          className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-foreground/[0.04]"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            {expandedMessageId === message.gmail_message_id ? (
+                              <ChevronDown size={15} className="shrink-0 text-foreground/60" />
+                            ) : (
+                              <ChevronRight size={15} className="shrink-0 text-foreground/60" />
                             )}
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-foreground">
+                                {message.from_json?.name || message.from_json?.email || "Unknown sender"}
+                              </p>
+                              {message.from_json?.email && (
+                                <p className="truncate text-xs font-mono text-foreground/65">
+                                  {message.from_json.email}
+                                </p>
+                              )}
+                            </div>
                           </div>
                           <p className="text-xs text-foreground/50">
                             {message.internal_date_ts
                               ? new Date(message.internal_date_ts).toLocaleString()
                               : ""}
                           </p>
-                        </div>
+                        </button>
 
-                        <p className="mt-1 text-xs text-foreground/55">
-                          To: {(message.to_json || []).map((recipient) => recipient.email).join(", ")}
-                        </p>
-                        {(message.cc_json || []).length > 0 && (
-                          <p className="mt-1 text-xs text-foreground/55">
-                            Cc: {(message.cc_json || []).map((recipient) => recipient.email).join(", ")}
-                          </p>
-                        )}
+                        {expandedMessageId === message.gmail_message_id && (
+                          <>
+                            <p className="mt-2 text-xs text-foreground/55">
+                              To: {(message.to_json || []).map((recipient) => recipient.email).join(", ")}
+                            </p>
+                            {(message.cc_json || []).length > 0 && (
+                              <p className="mt-1 text-xs text-foreground/55">
+                                Cc: {(message.cc_json || []).map((recipient) => recipient.email).join(", ")}
+                              </p>
+                            )}
 
-                        {message.body_html_sanitized ? (
-                          <iframe
-                            title={`email-preview-${message.gmail_message_id}`}
-                            className="mt-3 h-[520px] w-full rounded-xl border border-foreground/[0.08] bg-white isolate"
-                            sandbox="allow-popups allow-popups-to-escape-sandbox"
-                            style={{ contain: "strict" }}
-                            srcDoc={buildEmailHtmlDoc(message.subject, message.body_html_sanitized)}
-                          />
-                        ) : (
-                          <p className="mt-3 whitespace-pre-wrap text-xs text-foreground/65">
-                            {message.body_text || message.snippet || "(No content)"}
-                          </p>
-                        )}
+                            {message.body_html_sanitized ? (
+                              <iframe
+                                title={`email-preview-${message.gmail_message_id}`}
+                                className="mt-3 h-[520px] w-full rounded-xl border border-foreground/[0.08] bg-white isolate"
+                                sandbox="allow-popups allow-popups-to-escape-sandbox"
+                                style={{ contain: "strict" }}
+                                srcDoc={buildEmailHtmlDoc(message.subject, message.body_html_sanitized)}
+                              />
+                            ) : (
+                              <p className="mt-3 whitespace-pre-wrap text-xs text-foreground/65">
+                                {message.body_text || message.snippet || "(No content)"}
+                              </p>
+                            )}
 
-                        {(attachmentsByMessage[message.gmail_message_id] || []).length > 0 && (
-                          <div className="mt-3 flex flex-col gap-2">
-                            {(attachmentsByMessage[message.gmail_message_id] || []).map((attachment) => (
-                              <div
-                                key={`${attachment.gmail_attachment_id}-${attachment.filename}`}
-                                className="rounded-lg bg-foreground/[0.05] px-2.5 py-2 text-[11px] text-foreground/70"
-                                title={attachment.mime_type}
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <span className="truncate">
-                                    {attachment.filename} · {formatBytes(attachment.size_bytes)}
-                                  </span>
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      onClick={() =>
-                                        handleDownloadAttachment(message.gmail_message_id, attachment)
-                                      }
-                                      disabled={
-                                        attachmentActions[
-                                          `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                        ] === "downloading" ||
-                                        attachmentActions[
-                                          `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                        ] === "saving"
-                                      }
-                                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.06] disabled:opacity-50"
-                                    >
-                                      {attachmentActions[
-                                        `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                      ] === "downloading" ? (
-                                        <Loader2 size={11} className="animate-spin" />
-                                      ) : (
-                                        <Download size={11} />
-                                      )}
-                                      Download
-                                    </button>
-                                    <button
-                                      onClick={() =>
-                                        handleSaveAttachment(message.gmail_message_id, attachment)
-                                      }
-                                      disabled={
-                                        attachmentActions[
-                                          `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                        ] === "downloading" ||
-                                        attachmentActions[
-                                          `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                        ] === "saving"
-                                      }
-                                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.06] disabled:opacity-50"
-                                    >
-                                      {attachmentActions[
-                                        `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                      ] === "saving" ? (
-                                        <Loader2 size={11} className="animate-spin" />
-                                      ) : attachmentActions[
-                                          `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                        ] === "saved" ? (
-                                        <Check size={11} />
-                                      ) : (
-                                        <FolderPlus size={11} />
-                                      )}
-                                      {attachmentActions[
-                                        `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
-                                      ] === "saved"
-                                        ? "Saved"
-                                        : "Save to Documents"}
-                                    </button>
+                            {(attachmentsByMessage[message.gmail_message_id] || []).length > 0 && (
+                              <div className="mt-3 flex flex-col gap-2">
+                                {(attachmentsByMessage[message.gmail_message_id] || []).map((attachment) => (
+                                  <div
+                                    key={`${attachment.gmail_attachment_id}-${attachment.filename}`}
+                                    className="rounded-lg bg-foreground/[0.05] px-2.5 py-2 text-[11px] text-foreground/70"
+                                    title={attachment.mime_type}
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <span className="truncate">
+                                        {attachment.filename} · {formatBytes(attachment.size_bytes)}
+                                      </span>
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          onClick={() =>
+                                            handleDownloadAttachment(message.gmail_message_id, attachment)
+                                          }
+                                          disabled={
+                                            attachmentActions[
+                                              `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                            ] === "downloading" ||
+                                            attachmentActions[
+                                              `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                            ] === "saving"
+                                          }
+                                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.06] disabled:opacity-50"
+                                        >
+                                          {attachmentActions[
+                                            `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                          ] === "downloading" ? (
+                                            <Loader2 size={11} className="animate-spin" />
+                                          ) : (
+                                            <Download size={11} />
+                                          )}
+                                          Download
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            handleSaveAttachment(message.gmail_message_id, attachment)
+                                          }
+                                          disabled={
+                                            attachmentActions[
+                                              `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                            ] === "downloading" ||
+                                            attachmentActions[
+                                              `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                            ] === "saving"
+                                          }
+                                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.06] disabled:opacity-50"
+                                        >
+                                          {attachmentActions[
+                                            `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                          ] === "saving" ? (
+                                            <Loader2 size={11} className="animate-spin" />
+                                          ) : attachmentActions[
+                                              `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                            ] === "saved" ? (
+                                            <Check size={11} />
+                                          ) : (
+                                            <FolderPlus size={11} />
+                                          )}
+                                          {attachmentActions[
+                                            `${message.gmail_message_id}:${attachment.gmail_attachment_id}`
+                                          ] === "saved"
+                                            ? "Saved"
+                                            : "Save to Documents"}
+                                        </button>
+                                      </div>
+                                    </div>
                                   </div>
-                                </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            )}
+                          </>
                         )}
                       </article>
                     ))}
