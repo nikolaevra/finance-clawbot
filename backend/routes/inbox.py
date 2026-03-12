@@ -105,6 +105,68 @@ def _thread_ids_by_inbox_scope(
     return ordered_thread_ids
 
 
+def _enrich_threads_with_list_metadata(
+    sb,
+    *,
+    user_id: str,
+    integration_id: str,
+    threads: list[dict],
+) -> list[dict]:
+    if not threads:
+        return threads
+
+    thread_ids = [row.get("gmail_thread_id") for row in threads if row.get("gmail_thread_id")]
+    if not thread_ids:
+        return threads
+
+    email_rows = (
+        sb.table("emails")
+        .select("gmail_thread_id, from_json, has_attachments, internal_date_ts")
+        .eq("user_id", user_id)
+        .eq("integration_id", integration_id)
+        .in_("gmail_thread_id", thread_ids)
+        .is_("deleted_at", "null")
+        .order("internal_date_ts", desc=True)
+        .execute()
+    ).data or []
+
+    latest_sender_by_thread: dict[str, tuple[str, str]] = {}
+    has_attachments_by_thread: dict[str, bool] = {}
+    for email in email_rows:
+        thread_id = email.get("gmail_thread_id")
+        if not thread_id:
+            continue
+
+        has_attachments_by_thread[thread_id] = has_attachments_by_thread.get(thread_id, False) or bool(
+            email.get("has_attachments")
+        )
+
+        if thread_id in latest_sender_by_thread:
+            continue
+        sender = email.get("from_json") or {}
+        latest_sender_by_thread[thread_id] = (
+            (sender.get("name") or "").strip(),
+            (sender.get("email") or "").strip(),
+        )
+
+    enriched: list[dict] = []
+    for thread in threads:
+        thread_id = thread.get("gmail_thread_id")
+        sender_name = ""
+        sender_email = ""
+        if thread_id and thread_id in latest_sender_by_thread:
+            sender_name, sender_email = latest_sender_by_thread[thread_id]
+        enriched.append(
+            {
+                **thread,
+                "latest_sender_name": sender_name,
+                "latest_sender_email": sender_email,
+                "has_attachments": bool(has_attachments_by_thread.get(thread_id or "", False)),
+            }
+        )
+    return enriched
+
+
 @inbox_bp.route("/inbox/threads", methods=["GET"])
 @require_auth
 def list_threads():
@@ -156,9 +218,15 @@ def list_threads():
         ).data or []
         row_by_id = {row["gmail_thread_id"]: row for row in rows}
         ordered_rows = [row_by_id[thread_id] for thread_id in selected_ids if thread_id in row_by_id]
+        enriched_rows = _enrich_threads_with_list_metadata(
+            sb,
+            user_id=g.user_id,
+            integration_id=integration["id"],
+            threads=ordered_rows,
+        )
         return jsonify(
             {
-                "threads": ordered_rows,
+                "threads": enriched_rows,
                 "page": page,
                 "limit": limit,
                 "has_more": has_more,
@@ -188,9 +256,15 @@ def list_threads():
 
     rows = query.range(offset, offset + limit).execute().data or []
     has_more = len(rows) > limit
+    enriched_rows = _enrich_threads_with_list_metadata(
+        sb,
+        user_id=g.user_id,
+        integration_id=integration["id"],
+        threads=rows[:limit],
+    )
     return jsonify(
         {
-            "threads": rows[:limit],
+            "threads": enriched_rows,
             "page": page,
             "limit": limit,
             "has_more": has_more,

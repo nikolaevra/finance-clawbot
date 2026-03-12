@@ -203,6 +203,9 @@ export interface EmailThread {
   has_unread: boolean;
   snippet: string;
   ai_summary_preview: string;
+  latest_sender_name: string;
+  latest_sender_email: string;
+  has_attachments: boolean;
 }
 
 export interface EmailMessage {
