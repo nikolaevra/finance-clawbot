@@ -5,8 +5,6 @@ import type {
   MemoryAccessLogEntry,
   UserDocument,
   Integration,
-  WorkflowTemplate,
-  WorkflowRun,
   Skill,
   SkillContent,
   ToolCatalogEntry,
@@ -642,120 +640,6 @@ export async function getAuthToken(): Promise<string> {
     throw new Error("Not authenticated");
   }
   return session.access_token;
-}
-
-// ── Workflow API ─────────────────────────────────────────────────────
-
-export async function fetchWorkflowTemplates(): Promise<WorkflowTemplate[]> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflows`, { headers });
-  if (!res.ok) throw new Error("Failed to fetch workflows");
-  return res.json();
-}
-
-export async function fetchWorkflowTemplate(
-  id: string
-): Promise<WorkflowTemplate> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflows/${id}`, { headers });
-  if (!res.ok) throw new Error("Failed to fetch workflow");
-  return res.json();
-}
-
-export async function createWorkflowTemplate(
-  data: Partial<WorkflowTemplate>
-): Promise<WorkflowTemplate> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflows`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error("Failed to create workflow");
-  return res.json();
-}
-
-export async function updateWorkflowTemplate(
-  id: string,
-  data: Partial<WorkflowTemplate>
-): Promise<WorkflowTemplate> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflows/${id}`, {
-    method: "PUT",
-    headers,
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error("Failed to update workflow");
-  return res.json();
-}
-
-export async function deleteWorkflowTemplate(id: string): Promise<void> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflows/${id}`, {
-    method: "DELETE",
-    headers,
-  });
-  if (!res.ok) throw new Error("Failed to delete workflow");
-}
-
-export async function triggerWorkflowRun(
-  templateId: string,
-  args?: Record<string, unknown>
-): Promise<WorkflowRun> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflows/${templateId}/run`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ args }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to start workflow");
-  }
-  return res.json();
-}
-
-export async function fetchWorkflowRuns(
-  status?: string
-): Promise<WorkflowRun[]> {
-  const headers = await getAuthHeaders();
-  const url = new URL(`${API_URL}/api/workflow-runs`);
-  if (status) url.searchParams.set("status", status);
-  const res = await fetch(url.toString(), { headers });
-  if (!res.ok) throw new Error("Failed to fetch workflow runs");
-  return res.json();
-}
-
-export async function fetchWorkflowRun(id: string): Promise<WorkflowRun> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflow-runs/${id}`, { headers });
-  if (!res.ok) throw new Error("Failed to fetch workflow run");
-  return res.json();
-}
-
-export async function approveWorkflowRun(
-  id: string,
-  approve: boolean,
-  comment?: string
-): Promise<WorkflowRun> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflow-runs/${id}/approve`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ approve, comment }),
-  });
-  if (!res.ok) throw new Error("Failed to approve/reject workflow");
-  return res.json();
-}
-
-export async function cancelWorkflowRun(id: string): Promise<WorkflowRun> {
-  const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/workflow-runs/${id}/cancel`, {
-    method: "POST",
-    headers,
-  });
-  if (!res.ok) throw new Error("Failed to cancel workflow");
-  return res.json();
 }
 
 // ── Skills API ──────────────────────────────────────────────────────

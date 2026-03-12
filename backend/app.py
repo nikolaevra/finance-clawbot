@@ -93,7 +93,6 @@ def create_app() -> Flask:
     from routes.memories import memories_bp
     from routes.documents import documents_bp
     from routes.integrations import integrations_bp
-    from routes.workflows import workflows_bp
     from routes.activity import activity_bp
     from routes.audit import audit_bp
     from routes.skills import skills_bp
@@ -104,7 +103,6 @@ def create_app() -> Flask:
     app.register_blueprint(memories_bp, url_prefix='/api')
     app.register_blueprint(documents_bp, url_prefix='/api')
     app.register_blueprint(integrations_bp, url_prefix='/api')
-    app.register_blueprint(workflows_bp, url_prefix='/api')
     app.register_blueprint(activity_bp, url_prefix='/api')
     app.register_blueprint(audit_bp, url_prefix='/api')
     app.register_blueprint(skills_bp, url_prefix='/api')

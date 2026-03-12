@@ -28,10 +28,12 @@ def _activity_category(event_type: str) -> str:
 
 def _to_activity_event(row: dict[str, Any]) -> dict[str, Any]:
     details = row.get("details") or {}
+    actor = row.get("actor")
+    normalized_actor = "agent" if actor in (None, "", "gateway", "lobster") else actor
     event: dict[str, Any] = {
         "id": row.get("id"),
         "type": row.get("event_type") or "activity",
-        "actor": row.get("actor") or "gateway",
+        "actor": normalized_actor,
         "timestamp": row.get("occurred_at") or row.get("created_at") or _now_iso(),
         "message": row.get("message") or row.get("title") or "Activity update",
         "source": row.get("event_source"),
@@ -162,9 +164,9 @@ def log_skill_live(
         conversation_id=conversation_id,
         event_type="skill_live_used",
         event_category="skill",
-        event_source="chat_gateway",
+        event_source="chat_runtime",
         status=status,
-        actor="gateway",
+        actor="agent",
         title=f"Skill used: {tool_name}",
         message=message,
         tool_name=tool_name,
@@ -193,7 +195,7 @@ def log_skill_background(
         event_category="skill",
         event_source="celery_automation",
         status=status,
-        actor="lobster",
+        actor="agent",
         title=f"Background skill {status}: {skill_name}",
         message=f"{skill_name} ({trigger_type})",
         details={"skill_id": skill_id, "trigger_type": trigger_type, **(details or {})},
@@ -213,7 +215,7 @@ def log_gmail_inbound(
         event_category="gmail",
         event_source="gmail_webhook",
         status="received",
-        actor="gateway",
+        actor="agent",
         title="New Gmail message received",
         message="Inbound Gmail event processed",
         details={"integration_id": integration_id, "event_id": event_id, **(details or {})},
@@ -237,7 +239,7 @@ def log_external_api_call(
         event_category="external_api",
         event_source=f"{service}_service",
         status=status,
-        actor="gateway",
+        actor="agent",
         title=f"{service} API call {status}",
         message=f"{operation}",
         detail=error_message,

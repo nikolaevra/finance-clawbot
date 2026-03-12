@@ -1,9 +1,9 @@
-"""Gateway service — central control plane for all message processing.
+"""Single-model runtime service for message processing.
 
-Every inbound message flows through ``Gateway.handle_message``, which owns
-the full lifecycle: session context, RAG retrieval, agent loop (LLM +
-tool calls), persistence, and event publishing.  HTTP routes and future
-channel adapters are thin wrappers that delegate here.
+Every inbound message flows through ``LLMRuntime.handle_message``, which owns
+the full lifecycle: session context, RAG retrieval, agent loop (LLM + tool
+calls), persistence, and event publishing. HTTP routes and background workers
+are thin wrappers that delegate here.
 
 Memory rules:
   - Normal conversation turns NEVER mutate memory.
@@ -39,10 +39,6 @@ from services.memory_service import (
     delete_bootstrap_file,
 )
 from services.embedding_service import hybrid_search
-from services.workflow_engine import (
-    get_pending_approvals,
-    get_active_workflows,
-)
 from services.skill_service import load_skills_for_prompt
 from services.skill_service import ensure_default_onboarding_skill
 from services.skill_service import ensure_default_finance_triage_skill
@@ -51,15 +47,6 @@ from services.skill_service import ensure_default_skill_creator_planner_skill
 from tools.registry import tool_registry
 
 log = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Human-readable event descriptions (unchanged)
-# ---------------------------------------------------------------------------
-
-_WORKFLOW_LABELS = {
-    "memory_consolidation": "Memory Consolidation",
-}
 
 
 def _parse_args(tool_args: str | dict) -> dict:
@@ -71,45 +58,8 @@ def _parse_args(tool_args: str | dict) -> dict:
         return {}
 
 
-def _workflow_label(name: str) -> str:
-    return _WORKFLOW_LABELS.get(name, name.replace("_", " ").title())
-
-
 def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | None], str]"]:
     """Return (dispatch_message, complete_message_fn) for a tool call."""
-    if tool_name == "workflow_run":
-        wf = args.get("workflow_name", "unknown")
-        label = _workflow_label(wf)
-        return (
-            f"Running {label} workflow",
-            lambda _r: f"Dispatched {label} to a background worker",
-        )
-
-    if tool_name == "workflow_status":
-        rid = args.get("run_id", "")[:8]
-        def _status_complete(r: str | None) -> str:
-            try:
-                d = json.loads(r) if r else {}
-                wf = _workflow_label(d.get("workflow", ""))
-                return f"{wf} is {d.get('status', 'unknown')}"
-            except Exception:
-                return f"Checked workflow status ({rid}…)"
-        return (f"Checking workflow status ({rid}…)", _status_complete)
-
-    if tool_name == "workflow_approve":
-        approve = args.get("approve", True)
-        action = "Approving" if approve else "Rejecting"
-        return (
-            f"{action} workflow run",
-            lambda _r: f"Workflow {'approved and resumed' if approve else 'rejected'}",
-        )
-
-    if tool_name == "workflow_list":
-        return (
-            "Listing available workflows",
-            lambda _r: "Retrieved workflow catalog",
-        )
-
     _TOOL_LABELS: dict[str, tuple[str, str]] = {
         "memory_append": ("Saving to daily memory log", "Saved to memory"),
         "memory_read": ("Reading memory file", "Memory file retrieved"),
@@ -141,11 +91,11 @@ def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | No
 
 
 # ---------------------------------------------------------------------------
-# Gateway — central control plane
+# Single-model runtime
 # ---------------------------------------------------------------------------
 
-class Gateway:
-    """Central control plane that owns the full message lifecycle."""
+class LLMRuntime:
+    """Single-model runtime that owns the full message lifecycle."""
 
     # ── Public entry point ─────────────────────────────────────────
 
@@ -163,7 +113,7 @@ class Gateway:
         """
         publish_event(user_id, {
             "type": "message_received",
-            "actor": "gateway",
+            "actor": "agent",
             "message": "Processing message",
         })
 
@@ -179,21 +129,14 @@ class Gateway:
             user_id, user_message,
         )
 
-        # 3. Workflow context (pending approvals, active runs)
-        workflow_context = ""
-        try:
-            workflow_context = self.build_workflow_context(user_id) or ""
-        except Exception:
-            log.exception("build_workflow_context failed for user=%s", user_id)
-
-        # 4. Skills context (user-defined skills for prompt injection)
+        # 3. Skills context (user-defined skills for prompt injection)
         skills_context = None
         try:
             skills_context = load_skills_for_prompt(user_id)
         except Exception:
             log.exception("load_skills_for_prompt failed for user=%s", user_id)
 
-        # 5. Bootstrap files (SOUL, IDENTITY, USER, AGENTS, TOOLS, BOOTSTRAP)
+        # 4. Bootstrap files (SOUL, IDENTITY, USER, AGENTS, TOOLS, BOOTSTRAP)
         bootstrap_context = ""
         is_first_run = False
         try:
@@ -204,7 +147,7 @@ class Gateway:
 
         publish_event(user_id, {
             "type": "context_loaded",
-            "actor": "gateway",
+            "actor": "agent",
             "message": "Context assembled",
         })
 
@@ -219,7 +162,6 @@ class Gateway:
             forced_skill=forced_skill,
             memory_context=memory_context,
             retrieved_context=retrieved_context,
-            workflow_context=workflow_context,
             skills_context=skills_context,
             bootstrap_context=bootstrap_context,
             rag_sources=rag_sources,
@@ -236,7 +178,7 @@ class Gateway:
 
         publish_event(user_id, {
             "type": "message_complete",
-            "actor": "gateway",
+            "actor": "agent",
             "message": "Response complete",
         })
 
@@ -251,7 +193,6 @@ class Gateway:
         forced_skill: str | None,
         memory_context: str,
         retrieved_context: str,
-        workflow_context: str,
         skills_context: str | None,
         bootstrap_context: str = "",
         rag_sources: list[dict],
@@ -272,18 +213,10 @@ class Gateway:
 
             history = self._get_history(conversation_id)
 
-            full_retrieved = retrieved_context
-            if workflow_context:
-                full_retrieved = (
-                    (retrieved_context + "\n\n" + workflow_context)
-                    if retrieved_context
-                    else workflow_context
-                )
-
             messages = build_messages(
                 history,
                 memory_context=memory_context,
-                retrieved_context=full_retrieved,
+                retrieved_context=retrieved_context,
                 history_hours=Config.CHAT_HISTORY_HOURS,
                 skills_context=skills_context,
                 bootstrap_context=bootstrap_context or None,
@@ -313,7 +246,7 @@ class Gateway:
                     messages = build_messages(
                         history,
                         memory_context=memory_context,
-                        retrieved_context=full_retrieved,
+                        retrieved_context=retrieved_context,
                         history_hours=Config.CHAT_HISTORY_HOURS,
                         skills_context=skills_context,
                         bootstrap_context=bootstrap_context or None,
@@ -331,7 +264,7 @@ class Gateway:
 
             publish_event(user_id, {
                 "type": "agent_streaming",
-                "actor": "gateway",
+                "actor": "agent",
                 "message": f"Streaming response (round {rounds})",
             })
 
@@ -520,7 +453,6 @@ class Gateway:
             forced_skill=None,
             memory_context=memory_context,
             retrieved_context="",
-            workflow_context="",
             skills_context=skills_context,
             bootstrap_context=bootstrap_context,
             rag_sources=[],
@@ -770,7 +702,7 @@ class Gateway:
 
         publish_event(user_id, {
             "type": "tool_dispatch",
-            "actor": "gateway",
+            "actor": "agent",
             "tool_name": tool_name,
             "message": dispatch_msg,
         })
@@ -788,7 +720,7 @@ class Gateway:
             log.debug("tool=%s completed (%d chars)", tool_name, len(result) if result else 0)
             publish_event(user_id, {
                 "type": "tool_complete",
-                "actor": "gateway",
+                "actor": "agent",
                 "tool_name": tool_name,
                 "message": complete_fn(result),
             })
@@ -805,7 +737,7 @@ class Gateway:
             log.exception("tool=%s raised an exception", tool_name)
             publish_event(user_id, {
                 "type": "tool_error",
-                "actor": "gateway",
+                "actor": "agent",
                 "tool_name": tool_name,
                 "message": f"{tool_name} failed: {exc}",
             })
@@ -820,99 +752,10 @@ class Gateway:
                 )
             raise
 
-    # ── Workflow context helpers ────────────────────────────────────
-
-    def build_workflow_context(self, user_id: str) -> str | None:
-        """System-message block describing pending approvals and active workflows."""
-        parts: list[str] = []
-
-        try:
-            pending = get_pending_approvals(user_id)
-            if pending:
-                lines = ["[Pending Workflow Approvals]"]
-                for p in pending:
-                    tpl = p.get("workflow_templates") or {}
-                    name = tpl.get("name", "unknown")
-                    steps = tpl.get("steps") or []
-                    idx = p.get("current_step_index", 0)
-                    prompt = ""
-                    if idx < len(steps):
-                        approval = steps[idx].get("approval") or {}
-                        prompt = approval.get("prompt", "")
-                    lines.append(
-                        f"- Workflow '{name}' (run {p['id']}) awaits approval: {prompt}"
-                    )
-                parts.append("\n".join(lines))
-        except Exception:
-            log.exception("get_pending_approvals failed for user=%s", user_id)
-
-        try:
-            active = get_active_workflows(user_id)
-            running = [w for w in active if w["status"] == "running"]
-            if running:
-                lines = ["[Running Workflows]"]
-                for w in running:
-                    tpl = w.get("workflow_templates") or {}
-                    name = tpl.get("name", "unknown")
-                    lines.append(f"- '{name}' (run {w['id']}) — step {w.get('current_step_index', '?')}")
-                parts.append("\n".join(lines))
-        except Exception:
-            log.exception("get_active_workflows failed for user=%s", user_id)
-
-        return "\n\n".join(parts) if parts else None
-
-    @staticmethod
-    def build_workflow_events(run: dict) -> list[dict]:
-        """Convert a workflow run dict into structured SSE event payloads."""
-        events: list[dict] = []
-        tpl = run.get("workflow_templates") or {}
-
-        if run["status"] in ("pending", "running"):
-            events.append({
-                "type": "workflow_started",
-                "run_id": run["id"],
-                "workflow": tpl.get("name", "unknown"),
-                "status": run["status"],
-            })
-
-        if run["status"] == "paused":
-            steps = tpl.get("steps") or []
-            idx = run.get("current_step_index", 0)
-            prompt = ""
-            if idx < len(steps):
-                approval = steps[idx].get("approval") or {}
-                prompt = approval.get("prompt", "Approve this step?")
-            events.append({
-                "type": "workflow_approval_needed",
-                "run_id": run["id"],
-                "workflow": tpl.get("name", "unknown"),
-                "prompt": prompt,
-                "resume_token": run.get("resume_token"),
-            })
-
-        if run["status"] == "completed":
-            events.append({
-                "type": "workflow_completed",
-                "run_id": run["id"],
-                "workflow": tpl.get("name", "unknown"),
-                "steps_state": run.get("steps_state"),
-            })
-
-        if run["status"] == "failed":
-            events.append({
-                "type": "workflow_failed",
-                "run_id": run["id"],
-                "workflow": tpl.get("name", "unknown"),
-                "error": run.get("error"),
-            })
-
-        return events
-
-
 # Module-level singleton
-gateway = Gateway()
+llm_runtime = LLMRuntime()
 
-# Backwards-compatible top-level aliases for any external callers
-dispatch_tool_call = gateway.dispatch_tool_call
-build_workflow_context = gateway.build_workflow_context
-build_workflow_events = Gateway.build_workflow_events
+# Backwards-compatible aliases
+Gateway = LLMRuntime
+gateway = llm_runtime
+dispatch_tool_call = llm_runtime.dispatch_tool_call

@@ -32,7 +32,6 @@ celery.conf.update(
     worker_prefetch_multiplier=1,
     result_expires=86400,  # 24 hours
     include=[
-        "tasks.workflow_tasks",
         "tasks.document_tasks",
         "tasks.analysis_tasks",
         "tasks.memory_tasks",

@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo, useState, useCallback } from "react";
-import Link from "next/link";
-import { useActivity } from "./ActivityProvider";
+import { useEffect, useMemo, useRef } from "react";
 import {
   Activity,
   ArrowRightLeft,
@@ -12,20 +10,10 @@ import {
   Loader2,
   Trash2,
   Wrench,
-  Play,
-  Pause,
-  SkipForward,
-  Zap,
-  Server,
   PanelRightClose,
-  Check,
-  X,
-  ChevronDown,
-  ChevronRight,
 } from "lucide-react";
 import type { ActivityEvent, ApprovalPreviewItem } from "@/types";
-import { approveWorkflowRun, cancelWorkflowRun } from "@/lib/api";
-import { logger } from "@/lib/logger";
+import { useActivity } from "./ActivityProvider";
 
 const HIDDEN_ACTIVITY_TYPES = new Set([
   "agent_streaming",
@@ -74,30 +62,22 @@ const EVENT_CONFIG: Record<
   tool_dispatch: { icon: ArrowRightLeft, color: "text-blue-400", pulse: true },
   tool_complete: { icon: CheckCircle2, color: "text-emerald-400" },
   tool_error: { icon: XCircle, color: "text-red-400" },
-  workflow_start: { icon: Play, color: "text-blue-400", pulse: true },
+  workflow_start: { icon: Loader2, color: "text-blue-400", pulse: true },
   step_start: { icon: Loader2, color: "text-blue-400", pulse: true },
   step_complete: { icon: CheckCircle2, color: "text-emerald-400" },
   step_failed: { icon: XCircle, color: "text-red-400" },
-  step_skipped: { icon: SkipForward, color: "text-foreground/30" },
-  approval_gate: { icon: Pause, color: "text-amber-400" },
-  workflow_complete: { icon: Zap, color: "text-emerald-400" },
+  step_skipped: { icon: Loader2, color: "text-foreground/30" },
+  approval_gate: { icon: AlertTriangle, color: "text-amber-400" },
+  workflow_complete: { icon: CheckCircle2, color: "text-emerald-400" },
   workflow_failed: { icon: AlertTriangle, color: "text-red-400" },
   workflow_done: { icon: CheckCircle2, color: "text-emerald-400" },
 };
 
-function ActorBadge({ actor }: { actor: "gateway" | "lobster" }) {
-  if (actor === "gateway") {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-blue-400/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-400/80 leading-none">
-        <Server size={8} />
-        Gateway
-      </span>
-    );
-  }
+function ActorBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-foreground/60 leading-none">
+    <span className="inline-flex items-center gap-1 rounded-full bg-blue-400/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-400/80 leading-none">
       <Wrench size={8} />
-      Lobster
+      Agent
     </span>
   );
 }
@@ -116,48 +96,6 @@ function PreviewBlock({ items }: { items: ApprovalPreviewItem[] }) {
             <p className="text-[11px] font-medium text-amber-400/80 mb-1">
               {item.summary}
             </p>
-          )}
-          {item.type === "suggestions" && item.sample && (
-            <div className="space-y-0.5">
-              {item.sample.map((s, si) => (
-                <div
-                  key={si}
-                  className="flex items-center gap-1.5 text-[10px] text-foreground/60"
-                >
-                  <span className="shrink-0 text-amber-400/70">-</span>
-                  <span className="truncate">
-                    {String(s.suggested_category || s.category || "")}
-                    {s.reason ? ` -- ${String(s.reason).slice(0, 60)}` : ""}
-                  </span>
-                </div>
-              ))}
-              {(item.count || 0) > (item.sample?.length || 0) && (
-                <p className="text-[10px] text-foreground/40 italic">
-                  +{(item.count || 0) - (item.sample?.length || 0)} more...
-                </p>
-              )}
-            </div>
-          )}
-          {item.type === "anomalies" && item.sample && (
-            <div className="space-y-0.5">
-              {item.sample.map((a, ai) => (
-                <div
-                  key={ai}
-                  className="flex items-center gap-1.5 text-[10px] text-foreground/60"
-                >
-                  <span className="shrink-0 text-red-400/70">-</span>
-                  <span className="truncate">
-                    {String(a.memo || a.contact || "")} -- $
-                    {String(a.amount || "")}
-                  </span>
-                </div>
-              ))}
-              {(item.count || 0) > (item.sample?.length || 0) && (
-                <p className="text-[10px] text-foreground/40 italic">
-                  +{(item.count || 0) - (item.sample?.length || 0)} more...
-                </p>
-              )}
-            </div>
           )}
           {item.type === "report" && item.preview && (
             <p className="text-[10px] text-foreground/60 line-clamp-4 whitespace-pre-wrap">
@@ -178,7 +116,6 @@ function EventRow({ event }: { event: ActivityEvent }) {
   const Icon = config.icon;
   const isError =
     event.type.includes("error") || event.type.includes("failed");
-  const isDone = event.type === "workflow_done" || event.type === "workflow_complete";
 
   return (
     <div className="group flex gap-2.5 py-2 px-3 hover:bg-foreground/[0.03] transition-colors">
@@ -191,18 +128,14 @@ function EventRow({ event }: { event: ActivityEvent }) {
 
       <div className="flex-1 min-w-0 pb-1">
         <div className="flex items-center gap-1.5 mb-0.5">
-          <ActorBadge actor={event.actor} />
+          <ActorBadge />
           <span className="text-[10px] text-foreground/45 tabular-nums">
             {formatTime(event.timestamp)}
           </span>
         </div>
         <p
           className={`text-xs leading-relaxed ${
-            isError
-              ? "text-red-400/80"
-              : isDone
-                ? "text-emerald-400/80 font-medium"
-                : "text-foreground/80"
+            isError ? "text-red-400/80" : "text-foreground/80"
           }`}
         >
           {event.message}
@@ -215,49 +148,10 @@ function EventRow({ event }: { event: ActivityEvent }) {
         {event.preview?.items && event.preview.items.length > 0 && (
           <PreviewBlock items={event.preview.items} />
         )}
-        {event.simulated_thinking && (
-          <p className="mt-1 text-[11px] text-blue-400/70 leading-relaxed italic">
-            Thinking simulation: {event.simulated_thinking}
-          </p>
-        )}
-        {(event.workflow_name || event.run_id || event.step_id || event.tool_name || event.status || event.source) && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            {event.workflow_name && (
-              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
-                workflow: {event.workflow_name}
-              </span>
-            )}
-            {event.run_id && (
-              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
-                run: {event.run_id.slice(0, 8)}
-              </span>
-            )}
-            {event.step_id && (
-              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
-                step: {event.step_id}
-              </span>
-            )}
-            {event.tool_name && (
-              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
-                tool: {event.tool_name}
-              </span>
-            )}
-            {event.status && (
-              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
-                status: {event.status}
-              </span>
-            )}
-            {event.source && (
-              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
-                source: {event.source}
-              </span>
-            )}
-          </div>
-        )}
         {event.verbose_data && Object.keys(event.verbose_data).length > 0 && (
           <details className="mt-1.5 rounded-lg bg-foreground/[0.03] p-2">
             <summary className="cursor-pointer text-[10px] text-foreground/60">
-              Step metadata
+              Metadata
             </summary>
             <div className="mt-1.5 space-y-1">
               {Object.entries(event.verbose_data).map(([key, value]) => (
@@ -272,337 +166,7 @@ function EventRow({ event }: { event: ActivityEvent }) {
             </div>
           </details>
         )}
-        {event.payload !== undefined && (
-          <details className="mt-1.5 rounded-lg bg-foreground/[0.03] p-2">
-            <summary className="cursor-pointer text-[10px] text-foreground/60">
-              Step payload
-            </summary>
-            <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap break-all text-[10px] text-foreground/55 leading-relaxed">
-              {formatVerboseValue(event.payload)}
-            </pre>
-          </details>
-        )}
-        {event.conversation_id && (
-          <div className="mt-1.5">
-            <Link
-              href={`/chat/${event.conversation_id}`}
-              className="inline-flex items-center rounded-md bg-blue-500/10 px-2 py-1 text-[10px] font-medium text-blue-400 hover:bg-blue-500/15"
-              title="Open the originating chat"
-            >
-              Open source chat
-            </Link>
-          </div>
-        )}
       </div>
-    </div>
-  );
-}
-
-interface TrackedRun {
-  runId: string;
-  name: string;
-  status: "running" | "paused" | "completed" | "failed";
-  steps: { id: string; status: string }[];
-  approvalPrompt?: string;
-  approvalPreview?: { items: ApprovalPreviewItem[] };
-  completionMessage?: string;
-}
-
-function useTrackedRuns(events: ActivityEvent[]): TrackedRun[] {
-  return useMemo(() => {
-    const runs = new Map<string, TrackedRun>();
-
-    for (const e of events) {
-      if (!e.run_id) continue;
-      const existing = runs.get(e.run_id);
-
-      switch (e.type) {
-        case "workflow_start":
-          runs.set(e.run_id, {
-            runId: e.run_id,
-            name: e.workflow_name || "Workflow",
-            status: "running",
-            steps: [],
-          });
-          break;
-        case "step_start":
-          if (existing) {
-            const stepIdx = existing.steps.findIndex(
-              (s) => s.id === e.step_id
-            );
-            if (stepIdx >= 0) {
-              existing.steps[stepIdx].status = "running";
-            } else {
-              existing.steps.push({
-                id: e.step_id || "?",
-                status: "running",
-              });
-            }
-          }
-          break;
-        case "step_complete":
-          if (existing) {
-            const stepIdx = existing.steps.findIndex(
-              (s) => s.id === e.step_id
-            );
-            if (stepIdx >= 0) existing.steps[stepIdx].status = "completed";
-          }
-          break;
-        case "step_failed":
-          if (existing) {
-            const stepIdx = existing.steps.findIndex(
-              (s) => s.id === e.step_id
-            );
-            if (stepIdx >= 0) existing.steps[stepIdx].status = "failed";
-            existing.status = "failed";
-          }
-          break;
-        case "step_skipped":
-          if (existing) {
-            const stepIdx = existing.steps.findIndex(
-              (s) => s.id === e.step_id
-            );
-            if (stepIdx >= 0) existing.steps[stepIdx].status = "skipped";
-            else
-              existing.steps.push({
-                id: e.step_id || "?",
-                status: "skipped",
-              });
-          }
-          break;
-        case "approval_gate":
-          if (existing) {
-            existing.status = "paused";
-            existing.approvalPrompt = e.detail;
-            if (e.preview) existing.approvalPreview = e.preview;
-          }
-          break;
-        case "workflow_complete":
-          if (existing) {
-            existing.status = "completed";
-            existing.completionMessage = e.message;
-          }
-          break;
-        case "workflow_failed":
-          if (existing) {
-            existing.status = "failed";
-            existing.completionMessage = e.message;
-          }
-          break;
-      }
-    }
-
-    return Array.from(runs.values());
-  }, [events]);
-}
-
-const STEP_BAR_COLORS: Record<string, string> = {
-  running: "bg-blue-400 animate-pulse",
-  completed: "bg-emerald-400",
-  failed: "bg-red-400",
-  skipped: "bg-foreground/15",
-  pending: "bg-foreground/[0.08]",
-};
-
-function RunCard({ run }: { run: TrackedRun }) {
-  const [expanded, setExpanded] = useState(run.status === "paused");
-  const [acting, setActing] = useState(false);
-
-  const handleApprove = useCallback(
-    async (approve: boolean) => {
-      setActing(true);
-      try {
-        await approveWorkflowRun(run.runId, approve);
-      } catch (err) {
-        logger.error("workflow_approval_action_failed", {
-          runId: run.runId,
-          approve,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        setActing(false);
-      }
-    },
-    [run.runId]
-  );
-
-  const handleCancel = useCallback(async () => {
-    setActing(true);
-    try {
-      await cancelWorkflowRun(run.runId);
-    } catch (err) {
-      logger.error("workflow_cancel_action_failed", {
-        runId: run.runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setActing(false);
-    }
-  }, [run.runId]);
-
-  const isTerminal = run.status === "completed" || run.status === "failed";
-
-  return (
-    <div
-      className={`rounded-xl ring-1 overflow-hidden transition-all ${
-        run.status === "paused"
-          ? "ring-amber-400/20 bg-amber-400/[0.04]"
-          : isTerminal
-            ? "ring-foreground/[0.06] bg-foreground/[0.02] opacity-60"
-            : "ring-foreground/[0.08] bg-foreground/[0.03]"
-      }`}
-    >
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
-      >
-        {expanded ? (
-          <ChevronDown size={11} className="text-foreground/50 shrink-0" />
-        ) : (
-          <ChevronRight size={11} className="text-foreground/50 shrink-0" />
-        )}
-        {run.status === "paused" ? (
-          <Pause size={11} className="text-amber-400 shrink-0" />
-        ) : run.status === "completed" ? (
-          <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />
-        ) : run.status === "failed" ? (
-          <XCircle size={11} className="text-red-400 shrink-0" />
-        ) : (
-          <Loader2
-            size={11}
-            className="animate-spin text-blue-400 shrink-0"
-          />
-        )}
-        <span className="text-xs font-medium text-foreground/80 truncate flex-1">
-          {run.name}
-        </span>
-        <span
-          className={`text-[10px] font-medium shrink-0 ${
-            run.status === "paused"
-              ? "text-amber-400/80"
-              : run.status === "completed"
-                ? "text-emerald-400/80"
-                : run.status === "failed"
-                  ? "text-red-400/80"
-                  : "text-blue-400/80"
-          }`}
-        >
-          {run.status === "paused"
-            ? "Needs approval"
-            : run.status === "completed"
-              ? "Completed"
-              : run.status === "failed"
-                ? "Failed"
-                : "Running"}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-foreground/[0.06] px-3 py-2.5 space-y-2.5">
-          <div className="flex items-center gap-0.5">
-            {run.steps.map((step) => (
-              <div
-                key={step.id}
-                className={`h-1 flex-1 rounded-full ${STEP_BAR_COLORS[step.status] || STEP_BAR_COLORS.pending}`}
-                title={`${step.id}: ${step.status}`}
-              />
-            ))}
-          </div>
-
-          {run.status === "paused" && (
-            <div className="space-y-2.5">
-              {run.approvalPrompt && (
-                <p className="text-[11px] text-amber-400/70 leading-relaxed">
-                  {run.approvalPrompt}
-                </p>
-              )}
-              {run.approvalPreview?.items && run.approvalPreview.items.length > 0 && (
-                <PreviewBlock items={run.approvalPreview.items} />
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleApprove(true)}
-                  disabled={acting}
-                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-400 disabled:opacity-50 shadow-sm"
-                >
-                  {acting ? (
-                    <Loader2 size={10} className="animate-spin" />
-                  ) : (
-                    <Check size={10} />
-                  )}
-                  Approve
-                </button>
-                <button
-                  onClick={() => handleApprove(false)}
-                  disabled={acting}
-                  className="inline-flex items-center gap-1 rounded-lg bg-foreground/[0.06] px-3 py-1.5 text-[11px] font-medium text-foreground/70 hover:text-foreground hover:bg-foreground/[0.1] disabled:opacity-50"
-                >
-                  <X size={10} />
-                  Reject
-                </button>
-              </div>
-            </div>
-          )}
-
-          {isTerminal && run.completionMessage && (
-            <p className={`text-[11px] leading-relaxed ${
-              run.status === "completed"
-                ? "text-emerald-400/70"
-                : "text-red-400/70"
-            }`}>
-              {run.completionMessage}
-            </p>
-          )}
-
-          {run.status === "running" && (
-            <button
-              onClick={handleCancel}
-              disabled={acting}
-              className="inline-flex items-center gap-1 rounded-lg bg-foreground/[0.06] px-3 py-1.5 text-[11px] font-medium text-foreground/60 hover:text-foreground/80 hover:bg-foreground/[0.1] disabled:opacity-50"
-            >
-              <X size={10} />
-              Cancel
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
-  const runs = useTrackedRuns(events);
-  if (runs.length === 0) return null;
-
-  const active = runs.filter(
-    (r) => r.status === "running" || r.status === "paused"
-  );
-  const terminal = runs.filter(
-    (r) => r.status === "completed" || r.status === "failed"
-  );
-
-  return (
-    <div className="px-3 py-3 space-y-2.5 border-b border-foreground/[0.06] shrink-0">
-      {active.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
-            Active runs
-          </p>
-          {active.map((run) => (
-            <RunCard key={run.runId} run={run} />
-          ))}
-        </div>
-      )}
-      {terminal.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
-            Recent
-          </p>
-          {terminal.map((run) => (
-            <RunCard key={run.runId} run={run} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -610,7 +174,6 @@ export function WorkflowRunsSection({ events }: { events: ActivityEvent[] }) {
 export function ActivityToggleButton() {
   const { togglePanel, isPanelOpen, events } = useActivity();
   const visibleEvents = events.filter((e) => !shouldHideEvent(e));
-
   const hasRecentActivity = visibleEvents.length > 0;
 
   if (isPanelOpen) return null;
@@ -720,18 +283,13 @@ export default function ActivityPanel() {
       {visibleEvents.length > 0 && (
         <div className="border-t border-foreground/[0.06] px-4 py-2 flex items-center justify-between text-[10px] text-foreground/45">
           <span>{visibleEvents.length} events</span>
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1 w-1 rounded-full bg-blue-400/60" />
-              Gateway: {visibleEvents.filter((e) => e.actor === "gateway").length}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1 w-1 rounded-full bg-foreground/30" />
-              Lobster: {visibleEvents.filter((e) => e.actor === "lobster").length}
-            </span>
-          </div>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-1 w-1 rounded-full bg-blue-400/60" />
+            Agent events
+          </span>
         </div>
       )}
     </div>
   );
 }
+

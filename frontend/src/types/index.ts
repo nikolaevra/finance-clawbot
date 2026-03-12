@@ -117,41 +117,6 @@ export interface Integration {
   updated_at: string;
 }
 
-// ── Workflow types ──────────────────────────────────────────────────
-
-export interface WorkflowStepDef {
-  id: string;
-  name: string;
-  task?: string;
-  args?: Record<string, unknown>;
-  input_from?: string;
-  timeout_seconds?: number;
-  approval?: {
-    required: boolean;
-    prompt?: string;
-  };
-  condition?: string;
-}
-
-export interface WorkflowTemplate {
-  id: string;
-  user_id: string | null;
-  name: string;
-  description: string | null;
-  steps: WorkflowStepDef[];
-  schedule: string | null;
-  is_active: boolean;
-  created_at: string;
-}
-
-export interface WorkflowStepState {
-  id: string;
-  status: "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval" | "approved";
-  result: unknown;
-  started_at: string | null;
-  completed_at: string | null;
-}
-
 // ── Skill types ─────────────────────────────────────────────────────
 
 export interface Skill {
@@ -209,7 +174,7 @@ export interface ApprovalPreviewItem {
 export interface ActivityEvent {
   id?: string;
   type: string;
-  actor: "gateway" | "lobster";
+  actor: "agent";
   timestamp: string;
   source?: string;
   status?: string;
@@ -224,28 +189,6 @@ export interface ActivityEvent {
   payload?: unknown;
   simulated_thinking?: string;
   verbose_data?: Record<string, unknown>;
-}
-
-export interface WorkflowRun {
-  id: string;
-  user_id: string;
-  template_id: string;
-  conversation_id: string | null;
-  status: "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
-  current_step_index: number;
-  steps_state: WorkflowStepState[];
-  resume_token: string | null;
-  trigger: "manual" | "chat" | "scheduled";
-  input_args: Record<string, unknown> | null;
-  error: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  workflow_templates?: {
-    name: string;
-    description: string | null;
-    steps?: WorkflowStepDef[];
-  };
 }
 
 // ── Inbox types ─────────────────────────────────────────────────────

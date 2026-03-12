@@ -25,13 +25,6 @@ const DOCUMENT_TOOLS = new Set([
   "memory_search",
 ]);
 
-const WORKFLOW_TOOLS = new Set([
-  "workflow_run",
-  "workflow_status",
-  "workflow_approve",
-  "workflow_list",
-]);
-
 interface MessageBubbleProps {
   message: Message | StreamingMessage;
   toolMeta?: ToolMeta;
@@ -197,12 +190,6 @@ export default function MessageBubble({
 
   if (isTool) {
     const isDocumentTool = toolMeta && DOCUMENT_TOOLS.has(toolMeta.name);
-    const isWorkflowTool = toolMeta && WORKFLOW_TOOLS.has(toolMeta.name);
-
-    if (isWorkflowTool) {
-      return null;
-    }
-
     if (isDocumentTool) {
       const sourceFiles = getToolSourceFiles(toolMeta, content);
 

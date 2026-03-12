@@ -1,8 +1,7 @@
 """Thin HTTP adapter for the chat endpoint.
 
-All orchestration (context assembly, agent loop, tool dispatch, persistence)
-is handled by the Gateway control plane.  This route only validates the
-HTTP request and delegates to ``gateway.handle_message``.
+All orchestration is handled by the single-model runtime service. This route
+validates the HTTP request and delegates to ``llm_runtime.handle_message``.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ import logging
 from flask import Blueprint, request, g, Response, jsonify, stream_with_context
 from middleware.auth import require_auth
 from services.supabase_service import get_supabase
-from services.gateway_service import gateway
+from services.llm_runtime_service import llm_runtime
 
 chat_bp = Blueprint('chat', __name__)
 log = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ def chat(conversation_id: str):
 
     return Response(
         stream_with_context(
-            gateway.handle_message(
+            llm_runtime.handle_message(
                 g.user_id,
                 conversation_id,
                 user_message,
@@ -111,8 +110,11 @@ def approve_tools(conversation_id: str):
 
     return Response(
         stream_with_context(
-            gateway.resume_after_approval(
-                g.user_id, conversation_id, tool_call_ids, approved,
+            llm_runtime.resume_after_approval(
+                g.user_id,
+                conversation_id,
+                tool_call_ids,
+                approved,
             )
         ),
         mimetype='text/event-stream',
@@ -122,3 +124,5 @@ def approve_tools(conversation_id: str):
             'Connection': 'keep-alive',
         },
     )
+
+

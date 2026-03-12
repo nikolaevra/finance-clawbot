@@ -17,13 +17,6 @@ import {
 } from "lucide-react";
 import type { PendingToolApproval } from "@/types";
 
-const HIDDEN_TOOL_NAMES = new Set([
-  "workflow_run",
-  "workflow_status",
-  "workflow_approve",
-  "workflow_list",
-]);
-
 const TOOL_ICONS: Record<string, typeof Mail> = {
   gmail_send_message: Mail,
   gmail_reply_message: Reply,
@@ -133,9 +126,7 @@ export function ToolApprovalCard({
     setStatus(approved ? "approved" : "rejected");
   };
 
-  const visibleToolCalls = approval.toolCalls.filter(
-    (tc) => !HIDDEN_TOOL_NAMES.has(tc.name)
-  );
+  const visibleToolCalls = approval.toolCalls;
 
   if (status === "approved") {
     return (

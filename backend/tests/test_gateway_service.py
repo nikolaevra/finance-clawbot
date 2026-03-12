@@ -12,10 +12,10 @@ def test_parse_args_and_describe_tool():
     assert gateway_service._parse_args("{bad") == {}
 
     dispatch, complete = gateway_service._describe_tool(
-        "workflow_run", {"workflow_name": "memory_consolidation"}
+        "memory_read", {"date": "2026-03-06"}
     )
-    assert "Memory Consolidation" in dispatch
-    assert "background worker" in complete(None)
+    assert "Reading memory file" in dispatch
+    assert "Memory file retrieved" in complete(None)
 
 
 def test_collect_tool_sources_includes_memory_document_and_integrations():
@@ -71,39 +71,6 @@ def test_dispatch_tool_call_publishes_events(monkeypatch, request_context):
     assert published[1]["type"] == "tool_complete"
 
 
-def test_build_workflow_context_and_events(monkeypatch):
-    monkeypatch.setattr(
-        gateway_service,
-        "get_pending_approvals",
-        lambda _user: [
-            {
-                "id": "run-1",
-                "current_step_index": 0,
-                "workflow_templates": {
-                    "name": "monthly_close",
-                    "steps": [{"approval": {"prompt": "Approve now"}}],
-                },
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        gateway_service,
-        "get_active_workflows",
-        lambda _user: [
-            {
-                "id": "run-2",
-                "status": "running",
-                "current_step_index": 2,
-                "workflow_templates": {"name": "sync_books"},
-            }
-        ],
-    )
-
-    ctx = gateway_service.Gateway().build_workflow_context("user-1")
-    assert "[Pending Workflow Approvals]" in ctx
-    assert "[Running Workflows]" in ctx
-
-    events = gateway_service.Gateway.build_workflow_events(
-        {"id": "run-3", "status": "paused", "resume_token": "abc", "workflow_templates": {"name": "x", "steps": [{"approval": {"prompt": "Go?"}}]}, "current_step_index": 0}
-    )
-    assert events[0]["type"] == "workflow_approval_needed"
+def test_runtime_aliases_exist():
+    assert gateway_service.gateway is gateway_service.llm_runtime
+    assert gateway_service.Gateway is gateway_service.LLMRuntime

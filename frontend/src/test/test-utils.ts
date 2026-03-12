@@ -57,7 +57,7 @@ export function makeActivityEvent(
 ): ActivityEvent {
   return {
     type: "message_received",
-    actor: "gateway",
+    actor: "agent",
     timestamp: "2026-03-06T12:00:00.000Z",
     message: "Processing message",
     ...overrides,

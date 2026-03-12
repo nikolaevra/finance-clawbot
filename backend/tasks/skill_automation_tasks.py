@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from celery_app import celery
 from services.supabase_service import get_supabase
-from services.gateway_service import gateway
+from services.llm_runtime_service import llm_runtime
 from services.skill_service import get_skill
 from services.audit_log_service import log_skill_background
 from services.conversation_service import create_background_conversation
@@ -153,7 +153,7 @@ def execute_scheduled_skill_automation(skill_id: str, run_key: str) -> dict:
         details={"run_key": run_key, "conversation_id": conversation_id},
     )
     try:
-        for _ in gateway.handle_message(skill["user_id"], conversation_id, prompt):
+        for _ in llm_runtime.handle_message(skill["user_id"], conversation_id, prompt):
             pass
         log_skill_background(
             user_id=skill["user_id"],
@@ -242,7 +242,7 @@ def execute_triggered_skill_automation(skill_id: str, event_id: str, payload: di
         details={"event_id": event_id, "conversation_id": conversation_id},
     )
     try:
-        for _ in gateway.handle_message(skill["user_id"], conversation_id, prompt):
+        for _ in llm_runtime.handle_message(skill["user_id"], conversation_id, prompt):
             pass
         log_skill_background(
             user_id=skill["user_id"],
