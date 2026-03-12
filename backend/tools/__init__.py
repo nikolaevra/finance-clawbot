@@ -7,3 +7,4 @@ import tools.workflow_tools  # noqa: F401
 import tools.skill_tools  # noqa: F401
 import tools.gmail_tools  # noqa: F401
 import tools.float_tools  # noqa: F401
+import tools.automation_tools  # noqa: F401

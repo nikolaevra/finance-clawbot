@@ -55,6 +55,16 @@ export interface PendingToolApproval {
   }>;
 }
 
+export interface PendingExternalWait {
+  conversationId: string;
+  wait: {
+    wait_id: string;
+    channel: string;
+    message?: string;
+    timeout_at?: string | null;
+  };
+}
+
 export interface StreamingMessage {
   role: "assistant";
   content: string;
@@ -63,6 +73,7 @@ export interface StreamingMessage {
   sources: SourceReference[] | null;
   isStreaming: boolean;
   pendingApproval: PendingToolApproval | null;
+  pendingExternalWait?: PendingExternalWait | null;
 }
 
 // ── Memory types ─────────────────────────────────────────────────────
@@ -146,7 +157,7 @@ export interface WorkflowTemplate {
 
 export interface WorkflowStepState {
   id: string;
-  status: "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval" | "approved";
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval" | "approved" | "awaiting_external_response";
   result: unknown;
   started_at: string | null;
   completed_at: string | null;

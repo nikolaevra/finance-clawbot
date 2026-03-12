@@ -48,6 +48,7 @@ from services.skill_service import ensure_default_onboarding_skill
 from services.skill_service import ensure_default_finance_triage_skill
 from services.skill_service import ensure_default_float_spend_overview_skill
 from services.skill_service import ensure_default_skill_creator_planner_skill
+from services.automation_wait_service import get_wait
 from tools.registry import tool_registry
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,20 @@ def _parse_args(tool_args: str | dict) -> dict:
 
 def _workflow_label(name: str) -> str:
     return _WORKFLOW_LABELS.get(name, name.replace("_", " ").title())
+
+
+def _extract_wait_pause(result_str: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(result_str) if result_str else {}
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if not parsed.get("pause_execution"):
+        return None
+    if parsed.get("status") != "awaiting_external_response":
+        return None
+    return parsed
 
 
 def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | None], str]"]:
@@ -108,6 +123,13 @@ def _describe_tool(tool_name: str, args: dict) -> tuple[str, "Callable[[str | No
         return (
             "Listing available workflows",
             lambda _r: "Retrieved workflow catalog",
+        )
+
+    if tool_name == "await_external_response":
+        channel = args.get("channel", "external")
+        return (
+            f"Pausing execution to await {channel} response",
+            lambda _r: f"Execution paused awaiting {channel} response",
         )
 
     _TOOL_LABELS: dict[str, tuple[str, str]] = {
@@ -401,9 +423,14 @@ class Gateway:
                 tool_args = tc["function"]["arguments"]
                 tool_call_id = tc["id"]
 
-                result_str = self.dispatch_tool_call(
-                    tool_name, tool_args, user_id, conversation_id,
-                )
+                g.current_tool_call_id = tool_call_id
+                try:
+                    result_str = self.dispatch_tool_call(
+                        tool_name, tool_args, user_id, conversation_id,
+                    )
+                finally:
+                    if hasattr(g, "current_tool_call_id"):
+                        delattr(g, "current_tool_call_id")
 
                 self._save_message(
                     conversation_id,
@@ -418,6 +445,14 @@ class Gateway:
                 )
 
                 yield f"event: tool_result\ndata: {json.dumps({'tool_call_id': tool_call_id, 'name': tool_name, 'result': result_str})}\n\n"
+
+                wait_pause = _extract_wait_pause(result_str)
+                if wait_pause:
+                    yield (
+                        "event: external_wait_needed\n"
+                        f"data: {json.dumps({'conversation_id': conversation_id, 'wait': wait_pause})}\n\n"
+                    )
+                    return
 
             # If any tools need approval, pause the loop
             if approval_calls:
@@ -512,6 +547,66 @@ class Gateway:
             skills_context = load_skills_for_prompt(user_id)
         except Exception:
             pass
+
+        yield from self._run_agent_loop(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message="",
+            forced_skill=None,
+            memory_context=memory_context,
+            retrieved_context="",
+            workflow_context="",
+            skills_context=skills_context,
+            bootstrap_context=bootstrap_context,
+            rag_sources=[],
+        )
+
+    def resume_after_wait(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        wait_id: str,
+    ) -> Iterator[str]:
+        """Resume agent loop after a wait record has been matched."""
+        g.user_id = user_id
+        g.conversation_id = conversation_id
+
+        wait = get_wait(wait_id)
+        if not wait:
+            yield f"event: error\ndata: {json.dumps({'error': 'Wait record not found'})}\n\n"
+            return
+        if wait.get("status") != "matched":
+            yield f"event: error\ndata: {json.dumps({'error': 'Wait is not matched'})}\n\n"
+            return
+
+        tool_call_id = wait.get("tool_call_id")
+        matched_payload = wait.get("matched_payload") or {}
+        if tool_call_id:
+            sb = get_supabase()
+            result = {
+                "tool_used": "await_external_response",
+                "status": "matched",
+                "wait_id": wait_id,
+                "channel": wait.get("channel"),
+                "matched_payload": matched_payload,
+                "message": "External response matched. Resuming execution.",
+            }
+            sb.table("messages").update({
+                "content": json.dumps(result, default=str),
+            }).eq("conversation_id", conversation_id).eq("tool_call_id", tool_call_id).execute()
+
+        memory_context = self._load_session_context(user_id)
+        bootstrap_context = ""
+        try:
+            bootstrap_context = load_bootstrap_files(user_id)
+        except Exception:
+            log.exception("load_bootstrap_files failed during wait resume user=%s", user_id)
+        skills_context = None
+        try:
+            skills_context = load_skills_for_prompt(user_id)
+        except Exception:
+            log.exception("load_skills_for_prompt failed during wait resume user=%s", user_id)
 
         yield from self._run_agent_loop(
             user_id=user_id,

@@ -27,6 +27,7 @@ export default function ChatPage() {
     isLoading,
     error,
     pendingApproval,
+    pendingExternalWait,
     send,
     resolveApproval,
     setMessages,
@@ -104,6 +105,7 @@ export default function ChatPage() {
         onSend={handleSend}
         isLoading={isLoading}
         pendingApproval={pendingApproval}
+        pendingExternalWait={pendingExternalWait}
         onResolveApproval={resolveApproval}
         conversationId={activeConversationId}
       />

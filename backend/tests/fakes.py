@@ -83,6 +83,8 @@ class FakeTable:
                 return False
             if op == "gte" and row.get(key) < value:
                 return False
+            if op == "lte" and row.get(key) > value:
+                return False
             if op == "or_user_or_null" and row.get("user_id") not in {value, None}:
                 return False
         return True
@@ -129,6 +131,10 @@ class FakeTable:
 
     def gte(self, key: str, value: Any):
         self._filters.append(("gte", key, value))
+        return self
+
+    def lte(self, key: str, value: Any):
+        self._filters.append(("lte", key, value))
         return self
 
     def order(self, key: str, desc: bool = False):

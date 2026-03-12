@@ -27,6 +27,10 @@ beat_schedule = {
         "task": "tasks.skill_automation_tasks.scan_scheduled_automations",
         "schedule": crontab(minute="*"),
     },
+    "expire-automation-waits": {
+        "task": "tasks.skill_automation_tasks.expire_automation_waits",
+        "schedule": crontab(minute="*"),
+    },
 }
 
 log.info("beat_schedule_loaded jobs=%s", ",".join(sorted(beat_schedule.keys())))

@@ -31,6 +31,8 @@ from services.merge_service import (
 )
 from services.float_service import validate_token as float_validate_token
 from services.audit_log_service import log_gmail_inbound
+from services.inbound_event_adapter_service import normalize_event
+from services.automation_wait_service import record_inbound_event, match_pending_wait
 
 integrations_bp = Blueprint("integrations", __name__)
 
@@ -272,16 +274,34 @@ def gmail_webhook():
     from services.gmail_service import list_new_inbox_messages_since
     from services.automation_trigger_service import dispatch_trigger_event
     from tasks.email_sync_tasks import sync_gmail_history_delta
+    from tasks.skill_automation_tasks import resume_waiting_skill_execution
 
     events, latest_history_id = list_new_inbox_messages_since(
         row["account_token"], row.get("gmail_history_id")
     )
     enqueued = 0
+    wait_resumed = 0
     for event in events:
         message_id = event.get("message_id")
         if not message_id:
             continue
-        event_id = f"gmail:{row['id']}:{message_id}"
+        normalized = normalize_event(
+            provider="gmail",
+            user_id=row["user_id"],
+            integration_id=row["id"],
+            payload=event,
+        )
+        event_id = normalized.get("provider_event_id") or f"gmail:{row['id']}:{message_id}"
+        if not event_id:
+            continue
+        inbound = record_inbound_event(
+            provider="gmail",
+            provider_event_id=event_id,
+            user_id=row["user_id"],
+            channel=normalized.get("channel", "email"),
+            normalized_event=normalized,
+        )
+
         log_gmail_inbound(
             user_id=row["user_id"],
             integration_id=row["id"],
@@ -293,6 +313,17 @@ def gmail_webhook():
                 "from": event.get("from"),
             },
         )
+        matched_wait = match_pending_wait(
+            user_id=row["user_id"],
+            channel=normalized.get("channel", "email"),
+            inbound_event=normalized,
+            inbound_event_id=inbound["id"],
+        )
+        if matched_wait:
+            resume_waiting_skill_execution.delay(matched_wait["id"])
+            wait_resumed += 1
+            continue
+
         dispatch = dispatch_trigger_event(
             provider="gmail",
             event="new_email",
@@ -313,6 +344,7 @@ def gmail_webhook():
         {
             "status": "ok",
             "events": len(events),
+            "wait_resumed": wait_resumed,
             "enqueued": enqueued,
             "sync_enqueued": True,
         }

@@ -7,6 +7,7 @@ import type {
   ToolCall,
   SourceReference,
   PendingToolApproval,
+  PendingExternalWait,
 } from "@/types";
 import { sendMessage, fetchConversation, approveToolCalls } from "@/lib/api";
 import { logger } from "@/lib/logger";
@@ -24,6 +25,8 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
   const [error, setError] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] =
     useState<PendingToolApproval | null>(null);
+  const [pendingExternalWait, setPendingExternalWait] =
+    useState<PendingExternalWait | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const onTitleUpdateRef = useRef(onTitleUpdate);
   onTitleUpdateRef.current = onTitleUpdate;
@@ -55,6 +58,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
 
       setError(null);
       setIsLoading(true);
+      setPendingExternalWait(null);
 
       // Optimistically add user message to UI
       const tempUserMsg: Message = {
@@ -80,6 +84,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
         sources: null,
         isStreaming: true,
         pendingApproval: null,
+        pendingExternalWait: null,
       });
 
       try {
@@ -193,6 +198,23 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
                     );
                     break;
                   }
+                  case "external_wait_needed": {
+                    const pendingWait: PendingExternalWait = {
+                      conversationId: parsed.conversation_id as string,
+                      wait: parsed.wait as PendingExternalWait["wait"],
+                    };
+                    setPendingExternalWait(pendingWait);
+                    setStreamingMessage((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            isStreaming: false,
+                            pendingExternalWait: pendingWait,
+                          }
+                        : null
+                    );
+                    break;
+                  }
                   case "done":
                     setStreamingMessage((prev) =>
                       prev ? { ...prev, isStreaming: false } : null
@@ -244,6 +266,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
 
       const toolCallIds = pendingApproval.toolCalls.map((tc) => tc.id);
       setPendingApproval(null);
+      setPendingExternalWait(null);
       setIsLoading(true);
       setStreamingMessage({
         role: "assistant",
@@ -253,6 +276,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
         sources: null,
         isStreaming: true,
         pendingApproval: null,
+        pendingExternalWait: null,
       });
 
       try {
@@ -348,6 +372,23 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
                     );
                     break;
                   }
+                  case "external_wait_needed": {
+                    const pendingWait: PendingExternalWait = {
+                      conversationId: parsed.conversation_id as string,
+                      wait: parsed.wait as PendingExternalWait["wait"],
+                    };
+                    setPendingExternalWait(pendingWait);
+                    setStreamingMessage((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            isStreaming: false,
+                            pendingExternalWait: pendingWait,
+                          }
+                        : null
+                    );
+                    break;
+                  }
                   case "done":
                     setStreamingMessage((prev) =>
                       prev ? { ...prev, isStreaming: false } : null
@@ -395,6 +436,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
     setStreamingMessage(null);
     setIsLoading(false);
     setPendingApproval(null);
+    setPendingExternalWait(null);
   }, []);
 
   return {
@@ -403,6 +445,7 @@ export function useChat({ conversationId, onTitleUpdate }: UseChatOptions) {
     isLoading,
     error,
     pendingApproval,
+    pendingExternalWait,
     send,
     resolveApproval,
     cancel,

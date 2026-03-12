@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useMemo, Fragment } from "react";
-import type { Message, StreamingMessage, ToolMeta, SourceReference, PendingToolApproval } from "@/types";
+import type { Message, StreamingMessage, ToolMeta, SourceReference, PendingToolApproval, PendingExternalWait } from "@/types";
 import MessageBubble from "./MessageBubble";
 import { ToolApprovalCard } from "./ToolApprovalCard";
+import { ExternalWaitCard } from "./ExternalWaitCard";
 
 interface MessageListProps {
   messages: Message[];
   streamingMessage: StreamingMessage | null;
   pendingApproval?: PendingToolApproval | null;
+  pendingExternalWait?: PendingExternalWait | null;
   onResolveApproval?: (approved: boolean) => void;
   conversationId?: string | null;
 }
@@ -52,6 +54,7 @@ export default function MessageList({
   messages,
   streamingMessage,
   pendingApproval,
+  pendingExternalWait,
   onResolveApproval,
   conversationId,
 }: MessageListProps) {
@@ -216,6 +219,7 @@ export default function MessageList({
             onResolve={onResolveApproval}
           />
         )}
+        {pendingExternalWait && <ExternalWaitCard pendingWait={pendingExternalWait} />}
         <div ref={bottomRef} className="h-6" />
       </div>
     </div>

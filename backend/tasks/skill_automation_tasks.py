@@ -9,8 +9,9 @@ from celery_app import celery
 from services.supabase_service import get_supabase
 from services.gateway_service import gateway
 from services.skill_service import get_skill
-from services.audit_log_service import log_skill_background
+from services.audit_log_service import log_skill_background, log_wait_lifecycle
 from services.conversation_service import create_background_conversation
+from services.automation_wait_service import get_wait, expire_pending_waits
 
 log = logging.getLogger(__name__)
 
@@ -264,3 +265,41 @@ def execute_triggered_skill_automation(skill_id: str, event_id: str, payload: di
             details={"event_id": event_id, "error": str(exc)},
         )
         raise
+
+
+@celery.task(name="tasks.skill_automation_tasks.resume_waiting_skill_execution")
+def resume_waiting_skill_execution(wait_id: str) -> dict:
+    """Resume a previously paused skill execution after inbound wait match."""
+    wait = get_wait(wait_id)
+    if not wait:
+        return {"status": "skipped", "reason": "wait_not_found", "wait_id": wait_id}
+    if wait.get("status") != "matched":
+        return {"status": "skipped", "reason": "wait_not_matched", "wait_id": wait_id}
+
+    user_id = wait.get("user_id")
+    conversation_id = wait.get("conversation_id")
+    if not user_id or not conversation_id:
+        return {"status": "skipped", "reason": "missing_context", "wait_id": wait_id}
+
+    for _ in gateway.resume_after_wait(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        wait_id=wait_id,
+    ):
+        pass
+    log_wait_lifecycle(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        wait_id=wait_id,
+        event_type="wait_resumed",
+        status="resumed",
+        message="Wait matched and execution resumed.",
+    )
+    return {"status": "ok", "wait_id": wait_id}
+
+
+@celery.task(name="tasks.skill_automation_tasks.expire_automation_waits")
+def expire_automation_waits() -> dict:
+    """Mark timed-out pending waits as expired."""
+    expired = expire_pending_waits()
+    return {"status": "ok", "expired": expired}

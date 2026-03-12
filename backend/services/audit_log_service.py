@@ -17,6 +17,8 @@ def _now_iso() -> str:
 def _activity_category(event_type: str) -> str:
     if event_type.startswith("tool_") or event_type.startswith("message_"):
         return "skill"
+    if event_type.startswith("wait_"):
+        return "automation_wait"
     if event_type.startswith("workflow_") or event_type.startswith("step_") or event_type == "approval_gate":
         return "workflow"
     if event_type.startswith("gmail_"):
@@ -244,6 +246,30 @@ def log_external_api_call(
         external_service=service,
         external_endpoint=operation,
         details={"duration_ms": round(duration_ms or 0, 2), **(details or {})},
+    )
+
+
+def log_wait_lifecycle(
+    *,
+    user_id: str,
+    conversation_id: str | None,
+    wait_id: str,
+    event_type: str,
+    status: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    log_event(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        event_type=event_type,
+        event_category="automation_wait",
+        event_source="automation_wait_service",
+        status=status,
+        actor="lobster",
+        title=f"Wait {status}",
+        message=message,
+        details={"wait_id": wait_id, **(details or {})},
     )
 
 
