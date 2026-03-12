@@ -1,9 +1,13 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { MoonStar, Sunrise, Sun, Sunset, type LucideIcon } from "lucide-react";
-import { createConversation } from "@/lib/api";
+import { createConversation, fetchInboxThreads } from "@/lib/api";
+import type { EmailThread } from "@/types";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface StarterHomeProps {
   withinShell?: boolean;
@@ -49,6 +53,9 @@ export default function StarterHome({
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [threads, setThreads] = useState<EmailThread[]>([]);
+  const [isLoadingThreads, setIsLoadingThreads] = useState(true);
+  const [inboxError, setInboxError] = useState<string | null>(null);
   const firstName = userName?.trim().split(/\s+/)[0] || null;
 
   const { daySegment, timeZone } = useMemo(() => {
@@ -72,6 +79,43 @@ export default function StarterHome({
   const greeting = firstName
     ? `Good ${daySegment}, ${firstName}`
     : `Good ${daySegment}`;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInboxPreview() {
+      setIsLoadingThreads(true);
+      setInboxError(null);
+      try {
+        const data = await fetchInboxThreads("inbox", 1, 10);
+        if (!cancelled) {
+          setThreads(data.threads || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setInboxError(err instanceof Error ? err.message : "Failed to load inbox preview.");
+          setThreads([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingThreads(false);
+        }
+      }
+    }
+
+    loadInboxPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const formatThreadTime = (value: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString();
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -100,60 +144,108 @@ export default function StarterHome({
   };
 
   const containerClass = withinShell
-    ? "flex-1 bg-background flex items-center justify-center p-4"
-    : "min-h-screen bg-background flex items-center justify-center p-4";
+    ? "flex-1 bg-background overflow-y-auto"
+    : "min-h-screen bg-background";
 
   return (
     <main className={containerClass}>
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-2xl rounded-2xl border border-foreground/[0.12] bg-background px-4 py-4 shadow-sm"
-      >
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
-            <GreetingIcon size={20} strokeWidth={1.8} />
+      <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-6 md:py-10">
+        <form
+          onSubmit={handleSubmit}
+          className="w-full rounded-2xl border border-foreground/[0.12] bg-background px-4 py-4 shadow-sm md:px-5"
+        >
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+              <GreetingIcon size={20} strokeWidth={1.8} />
+            </div>
+            <div>
+              <p className="text-2xl font-semibold text-foreground">{greeting}</p>
+              <p className="text-xs text-foreground/45">
+                Finance AI Assistant · {timeZone}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-xl font-semibold text-foreground">{greeting}</p>
-            <p className="text-xs text-foreground/45">
-              Finance AI Assistant · {timeZone}
-            </p>
+          <p className="mb-3 text-sm text-foreground/60">
+            Start a new finance conversation
+          </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {STARTER_PROMPTS.map((starterPrompt) => (
+              <Button
+                key={starterPrompt.text}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPrompt(starterPrompt.text)}
+                disabled={isSubmitting}
+                className="h-auto rounded-full px-3 py-1.5 text-xs"
+              >
+                {starterPrompt.text}
+              </Button>
+            ))}
           </div>
-        </div>
-        <p className="mb-3 text-sm text-foreground/60">
-          Start a new finance conversation
-        </p>
-        <div className="mb-3 flex flex-wrap gap-2">
-          {STARTER_PROMPTS.map((starterPrompt) => (
-            <button
-              key={starterPrompt.text}
-              type="button"
-              onClick={() => setPrompt(starterPrompt.text)}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Ask your Finance AI Assistant anything..."
+              className="h-12"
               disabled={isSubmitting}
-              className="rounded-full border border-foreground/[0.12] px-3 py-1.5 text-xs text-foreground/75 transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            <Button
+              type="submit"
+              disabled={isSubmitting || !prompt.trim()}
+              className="h-12 px-6 sm:w-auto"
             >
-              {starterPrompt.text}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Ask your Finance AI Assistant anything..."
-            className="h-12 flex-1 rounded-xl border border-foreground/[0.12] bg-background px-4 text-sm text-foreground outline-none transition-colors focus:border-foreground/30"
-            disabled={isSubmitting}
-          />
-          <button
-            type="submit"
-            disabled={isSubmitting || !prompt.trim()}
-            className="h-12 rounded-xl border border-foreground/[0.12] px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Send
-          </button>
-        </div>
-        {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
-      </form>
+              {isSubmitting ? "Sending..." : "Send"}
+            </Button>
+          </div>
+          {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+        </form>
+
+        <section className="mt-6 rounded-2xl border border-foreground/[0.12] bg-background p-4 shadow-sm md:p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-base font-semibold text-foreground">Inbox</h2>
+            <p className="text-xs text-foreground/45">Showing latest 10 emails</p>
+          </div>
+
+          {isLoadingThreads ? (
+            <p className="py-6 text-sm text-foreground/55">Loading recent emails...</p>
+          ) : inboxError ? (
+            <p className="py-6 text-sm text-red-500">{inboxError}</p>
+          ) : threads.length === 0 ? (
+            <p className="py-6 text-sm text-foreground/55">No inbox emails yet.</p>
+          ) : (
+            <div className="divide-y divide-foreground/[0.08] rounded-xl border border-foreground/[0.08]">
+              {threads.map((thread) => (
+                <div key={thread.gmail_thread_id} className="px-3 py-3 md:px-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="line-clamp-1 text-sm font-medium text-foreground">
+                          {thread.subject_normalized || "(No subject)"}
+                        </p>
+                        {thread.has_unread && (
+                          <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-blue-400" />
+                        )}
+                      </div>
+                      <p className="mt-1 line-clamp-1 text-xs text-foreground/55">
+                        {thread.snippet}
+                      </p>
+                    </div>
+                    <p className="shrink-0 text-[11px] text-foreground/45">
+                      {formatThreadTime(thread.last_message_internal_at)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button asChild variant="outline" className="mt-4 w-full">
+            <Link href="/chat/inbox">Go to inbox to see more emails</Link>
+          </Button>
+        </section>
+      </div>
     </main>
   );
 }
