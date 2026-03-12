@@ -12,7 +12,7 @@ import SourcesCitation from "./SourcesCitation";
 describe("SourcesCitation", () => {
   it("maps labels, hrefs, and badge types", () => {
     expect(sourceLabel("MEMORY.md")).toBe("Long-term Memory");
-    expect(sourceHref("daily/2026-03-06.md")).toBe("/chat/memories/daily/2026-03-06.md");
+    expect(sourceHref("daily/2026-03-06.md")).toBe("/chat/context");
     expect(typeLabel("documents/report.pdf")).toBe("PDF");
     expect(typeBadgeClasses("documents/report.pdf")).toContain("emerald");
   });

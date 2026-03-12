@@ -469,7 +469,9 @@ export default function InboxPage() {
                         <span className="h-2 w-2 rounded-full bg-blue-400 shrink-0" />
                       )}
                     </div>
-                    <p className="line-clamp-1 text-xs text-foreground/50 mt-1">{thread.snippet}</p>
+                    <p className="line-clamp-1 text-xs text-foreground/50 mt-1">
+                      {thread.ai_summary_preview || thread.snippet}
+                    </p>
                     <p className="text-[11px] text-foreground/40 mt-1">
                       {formatTime(thread.last_message_internal_at)}
                     </p>

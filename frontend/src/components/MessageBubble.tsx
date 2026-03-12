@@ -5,7 +5,15 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy, Check, Wrench, ExternalLink, ChevronRight, ChevronDown } from "lucide-react";
+import {
+  Copy,
+  Check,
+  Clipboard,
+  Wrench,
+  ExternalLink,
+  ChevronRight,
+  ChevronDown,
+} from "lucide-react";
 import { useState, type ReactNode, type HTMLAttributes } from "react";
 import Link from "next/link";
 import type { Message, StreamingMessage, ToolMeta, SourceReference } from "@/types";
@@ -29,6 +37,7 @@ interface MessageBubbleProps {
   message: Message | StreamingMessage;
   toolMeta?: ToolMeta;
   displaySources?: SourceReference[];
+  onPasteBody?: (body: string) => void;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -47,6 +56,54 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check size={13} /> : <Copy size={13} />}
     </button>
+  );
+}
+
+function BubbleActionButtons({
+  text,
+  align,
+  onPaste,
+}: {
+  text: string;
+  align: "left" | "right";
+  onPaste?: (body: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const canPaste = Boolean(onPaste);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div
+      className={`absolute top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 ${
+        align === "right" ? "-right-20" : "-left-20"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="rounded-md bg-foreground/[0.08] p-1.5 text-foreground/45 hover:bg-foreground/[0.12] hover:text-foreground/80"
+        title={copied ? "Copied" : "Copy message"}
+        aria-label={copied ? "Copied message" : "Copy message"}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+      {canPaste ? (
+        <button
+          type="button"
+          onClick={() => onPaste?.(text)}
+          className="rounded-md bg-foreground/[0.08] p-1.5 text-foreground/45 hover:bg-foreground/[0.12] hover:text-foreground/80"
+          title="Paste into input"
+          aria-label="Paste message into input"
+        >
+          <Clipboard size={13} />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -145,6 +202,7 @@ export default function MessageBubble({
   message,
   toolMeta,
   displaySources,
+  onPasteBody,
 }: MessageBubbleProps) {
   const [toolExpanded, setToolExpanded] = useState(false);
   const isUser = message.role === "user";
@@ -325,11 +383,16 @@ export default function MessageBubble({
   if (isUser) {
     return (
       <div className="flex justify-end px-4 py-1.5">
-        <div className="max-w-[75%] rounded-2xl rounded-br-md bg-blue-500 px-4 py-2.5 text-white shadow-md shadow-blue-500/10">
-          <div className="prose prose-sm max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-p:text-white prose-strong:text-white prose-headings:my-3 prose-headings:text-white prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:text-blue-50 prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:text-blue-50 prose-a:text-blue-100 prose-a:no-underline hover:prose-a:underline prose-hr:my-7 prose-hr:border-white/30 prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-white/30 prose-th:border prose-th:border-white/35 prose-th:px-2 prose-th:py-1 prose-th:text-left prose-th:text-white prose-td:border prose-td:border-white/25 prose-td:px-2 prose-td:py-1 prose-td:text-blue-50">
-            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={markdownComponents}>
-              {content}
-            </ReactMarkdown>
+        <div className="group relative max-w-[75%]">
+          {content ? (
+            <BubbleActionButtons text={content} align="left" onPaste={onPasteBody} />
+          ) : null}
+          <div className="rounded-2xl rounded-br-md bg-blue-500 px-4 py-2.5 text-white shadow-md shadow-blue-500/10">
+            <div className="prose prose-sm max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-p:text-white prose-strong:text-white prose-headings:my-3 prose-headings:text-white prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:text-blue-50 prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:text-blue-50 prose-a:text-blue-100 prose-a:no-underline hover:prose-a:underline prose-hr:my-7 prose-hr:border-white/30 prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-white/30 prose-th:border prose-th:border-white/35 prose-th:px-2 prose-th:py-1 prose-th:text-left prose-th:text-white prose-td:border prose-td:border-white/25 prose-td:px-2 prose-td:py-1 prose-td:text-blue-50">
+              <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={markdownComponents}>
+                {content}
+              </ReactMarkdown>
+            </div>
           </div>
         </div>
       </div>
@@ -344,7 +407,8 @@ export default function MessageBubble({
         )}
 
         {content ? (
-          <div className="rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
+          <div className="group relative rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
+            <BubbleActionButtons text={content} align="right" onPaste={onPasteBody} />
             <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6 prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6 prose-li:my-1 prose-li:marker:text-foreground/45 prose-blockquote:my-4 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-4 prose-blockquote:text-foreground/75 prose-pre:my-4 prose-pre:p-0 prose-pre:bg-transparent prose-headings:mt-6 prose-headings:mb-3 prose-headings:text-foreground/90 prose-hr:my-8 prose-hr:border-foreground/[0.22] prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-foreground/[0.18] prose-th:border prose-th:border-foreground/[0.18] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-foreground/80 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:border prose-td:border-foreground/[0.14] prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
               <ReactMarkdown
                 remarkPlugins={MARKDOWN_PLUGINS}

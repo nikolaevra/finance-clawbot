@@ -59,13 +59,13 @@ export function SourceIcon({ sourceFile }: { sourceFile: string }) {
 
 export function sourceHref(sourceFile: string): string | null {
   if (sourceFile === "MEMORY.md") {
-    return "/chat/memories/MEMORY.md";
+    return "/chat/context";
   }
   if (sourceFile.startsWith("daily/")) {
-    return `/chat/memories/${sourceFile}`;
+    return "/chat/context";
   }
   if (sourceFile.startsWith("documents/")) {
-    return "/chat/documents";
+    return "/chat/context";
   }
   return null;
 }

@@ -85,8 +85,8 @@ export default function ChatPage() {
   ]);
 
   const handleSend = useCallback(
-    (message: string) => {
-      send(message);
+    (message: string, options?: { forcedSkill?: string }) => {
+      send(message, options);
     },
     [send]
   );

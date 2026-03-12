@@ -5,6 +5,7 @@ import json
 import logging
 import platform
 from datetime import datetime, timezone
+from typing import Any
 import tiktoken
 from openai import OpenAI
 from config import Config
@@ -410,4 +411,73 @@ def summarize_document(text: str, filename: str) -> str | None:
         return response.choices[0].message.content.strip()
     except Exception:
         log.exception("summarize_document_failed filename=%s", filename)
+        return None
+
+
+# ── Inbox thread summarisation ────────────────────────────────────────
+
+_THREAD_SUMMARY_PROMPT = (
+    "You summarize email threads for an inbox list preview. "
+    "Return exactly one concise plain-text summary sentence (max 200 characters) "
+    "capturing the most recent ask, decision, or action item. "
+    "No markdown, no bullet points, no quotes."
+)
+
+_THREAD_SUMMARY_MAX_INPUT_CHARS = 10_000
+
+
+def summarize_email_thread_preview(
+    thread_subject: str,
+    messages: list[dict[str, Any]],
+) -> str | None:
+    """
+    Generate a short AI preview for an email thread using the mini model.
+
+    Returns None on failure so summarisation never blocks inbox sync.
+    """
+    if not messages:
+        return None
+
+    recent = messages[:8]
+    chunks: list[str] = []
+    for idx, message in enumerate(recent, start=1):
+        from_json = message.get("from_json") or {}
+        from_email = (from_json.get("email") or "").strip()
+        body_text = (message.get("body_text") or "").strip()
+        snippet = (message.get("snippet") or "").strip()
+        text = body_text if body_text else snippet
+        if not text:
+            continue
+        text = " ".join(text.split())
+        if len(text) > 600:
+            text = text[:600] + "..."
+        chunks.append(f"Message {idx} from {from_email or 'unknown'}: {text}")
+
+    if not chunks:
+        return None
+
+    input_text = (
+        f"Thread subject: {thread_subject or '(No subject)'}\n\n"
+        + "\n".join(chunks)
+    )
+    if len(input_text) > _THREAD_SUMMARY_MAX_INPUT_CHARS:
+        input_text = input_text[:_THREAD_SUMMARY_MAX_INPUT_CHARS] + "\n\n[...truncated...]"
+
+    try:
+        client = get_openai()
+        response = client.chat.completions.create(
+            model=Config.OPENAI_MINI_MODEL,
+            messages=[
+                {"role": "system", "content": _THREAD_SUMMARY_PROMPT},
+                {"role": "user", "content": input_text},
+            ],
+            max_completion_tokens=120,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        if not content:
+            return None
+        normalized = " ".join(content.split())
+        return normalized[:200]
+    except Exception:
+        log.exception("summarize_email_thread_preview_failed")
         return None

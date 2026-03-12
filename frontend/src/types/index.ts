@@ -202,6 +202,7 @@ export interface EmailThread {
   last_message_internal_at: string | null;
   has_unread: boolean;
   snippet: string;
+  ai_summary_preview: string;
 }
 
 export interface EmailMessage {

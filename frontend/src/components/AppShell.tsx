@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/resizable";
 
 const NON_CHAT_PREFIXES = [
+  "/chat/context",
   "/chat/memories",
   "/chat/documents",
   "/chat/skills",

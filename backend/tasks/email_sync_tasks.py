@@ -17,6 +17,7 @@ from services.gmail_service import (
     list_history_page,
     list_message_ids_page,
 )
+from services.openai_service import summarize_email_thread_preview
 from services.supabase_service import get_supabase
 
 log = logging.getLogger(__name__)
@@ -233,11 +234,11 @@ def _upsert_message(
     msg: dict[str, Any],
     *,
     hydrate_body: bool,
-) -> None:
+) -> str | None:
     gmail_message_id = msg.get("id")
     gmail_thread_id = msg.get("threadId")
     if not gmail_message_id or not gmail_thread_id:
-        return
+        return None
 
     payload = msg.get("payload") or {}
     headers = _extract_headers(msg)
@@ -322,6 +323,43 @@ def _upsert_message(
                 gmail_message_id,
                 payload,
             )
+    return gmail_thread_id
+
+
+def _fetch_thread_messages_for_summary(
+    sb,
+    *,
+    user_id: str,
+    integration_id: str,
+    thread_id: str,
+) -> list[dict[str, Any]]:
+    return (
+        sb.table("emails")
+        .select("body_text, snippet, from_json, internal_date_ts")
+        .eq("user_id", user_id)
+        .eq("integration_id", integration_id)
+        .eq("gmail_thread_id", thread_id)
+        .is_("deleted_at", "null")
+        .order("internal_date_ts", desc=True)
+        .limit(8)
+        .execute()
+    ).data or []
+
+
+def _fallback_thread_preview(messages: list[dict[str, Any]]) -> str:
+    for message in messages:
+        text = (message.get("body_text") or "").strip()
+        if text:
+            return " ".join(text.split())[:200]
+        snippet = (message.get("snippet") or "").strip()
+        if snippet:
+            return " ".join(snippet.split())[:200]
+    return ""
+
+
+def _enqueue_thread_summary_tasks(integration_id: str, thread_ids: set[str]) -> None:
+    for thread_id in thread_ids:
+        summarize_thread_preview.delay(integration_id, thread_id)
 
 
 def _get_integration(sb, integration_id: str) -> dict[str, Any] | None:
@@ -352,6 +390,7 @@ def kickoff_initial_gmail_sync(integration_id: str) -> dict[str, Any]:
     inserted = 0
     errors = 0
     hydrated_candidates: list[str] = []
+    touched_thread_ids: set[str] = set()
 
     _upsert_sync_state(
         sb,
@@ -379,7 +418,9 @@ def kickoff_initial_gmail_sync(integration_id: str) -> dict[str, Any]:
                         format="metadata",
                         metadata_headers=METADATA_HEADERS,
                     )
-                    _upsert_message(sb, user_id, integration_id, msg, hydrate_body=False)
+                    thread_id = _upsert_message(sb, user_id, integration_id, msg, hydrate_body=False)
+                    if thread_id:
+                        touched_thread_ids.add(thread_id)
                     inserted += 1
                     labels = msg.get("labelIds") or []
                     internal_ts = int(msg.get("internalDate") or 0) if str(msg.get("internalDate") or "").isdigit() else 0
@@ -416,6 +457,8 @@ def kickoff_initial_gmail_sync(integration_id: str) -> dict[str, Any]:
 
         if hydrated_candidates:
             hydrate_message_bodies.delay(integration_id, hydrated_candidates[:500])
+        if touched_thread_ids:
+            _enqueue_thread_summary_tasks(integration_id, touched_thread_ids)
 
         return {
             "status": "ok",
@@ -423,6 +466,7 @@ def kickoff_initial_gmail_sync(integration_id: str) -> dict[str, Any]:
             "inserted": inserted,
             "errors": errors,
             "hydration_enqueued": min(len(hydrated_candidates), 500),
+            "thread_summaries_enqueued": len(touched_thread_ids),
         }
     except Exception as exc:
         _upsert_sync_state(
@@ -448,15 +492,26 @@ def hydrate_message_bodies(integration_id: str, message_ids: list[str]) -> dict[
     token = integration["account_token"]
     hydrated = 0
     failed = 0
+    touched_thread_ids: set[str] = set()
     for msg_id in message_ids:
         try:
             msg = get_message_raw(token, msg_id, format="full")
-            _upsert_message(sb, user_id, integration_id, msg, hydrate_body=True)
+            thread_id = _upsert_message(sb, user_id, integration_id, msg, hydrate_body=True)
+            if thread_id:
+                touched_thread_ids.add(thread_id)
             hydrated += 1
         except Exception:
             failed += 1
             log.exception("gmail_hydrate_failed integration_id=%s msg_id=%s", integration_id, msg_id)
-    return {"status": "ok", "integration_id": integration_id, "hydrated": hydrated, "failed": failed}
+    if touched_thread_ids:
+        _enqueue_thread_summary_tasks(integration_id, touched_thread_ids)
+    return {
+        "status": "ok",
+        "integration_id": integration_id,
+        "hydrated": hydrated,
+        "failed": failed,
+        "thread_summaries_enqueued": len(touched_thread_ids),
+    }
 
 
 @celery.task(name="tasks.email_sync_tasks.sync_gmail_history_delta")
@@ -500,6 +555,7 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
     upserted_count = 0
     latest_history_id = start_history_id
     page_token: str | None = None
+    touched_thread_ids: set[str] = set()
     try:
         while True:
             page = list_history_page(token, start_history_id, page_token=page_token)
@@ -540,7 +596,9 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
                     log.info("gmail_delta_missing_message_skipped integration_id=%s msg_id=%s", integration_id, msg_id)
                     continue
                 raise
-            _upsert_message(sb, user_id, integration_id, msg, hydrate_body=False)
+            thread_id = _upsert_message(sb, user_id, integration_id, msg, hydrate_body=False)
+            if thread_id:
+                touched_thread_ids.add(thread_id)
             upserted_count += 1
             labels = msg.get("labelIds") or []
             internal_ts = int(msg.get("internalDate") or 0) if str(msg.get("internalDate") or "").isdigit() else 0
@@ -570,6 +628,8 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
         )
         if hydrated_candidates:
             hydrate_message_bodies.delay(integration_id, list(hydrated_candidates)[:500])
+        if touched_thread_ids:
+            _enqueue_thread_summary_tasks(integration_id, touched_thread_ids)
         return {
             "status": "ok",
             "integration_id": integration_id,
@@ -578,6 +638,7 @@ def sync_gmail_history_delta(integration_id: str) -> dict[str, Any]:
             "deleted": len(deleted_ids),
             "history_id": latest_history_id,
             "hydration_enqueued": min(len(hydrated_candidates), 500),
+            "thread_summaries_enqueued": len(touched_thread_ids),
         }
     except Exception as exc:
         _upsert_sync_state(
@@ -605,3 +666,66 @@ def sync_all_gmail_history_deltas() -> dict[str, Any]:
     for row in integrations:
         sync_gmail_history_delta.delay(row["id"])
     return {"status": "ok", "scheduled": len(integrations)}
+
+
+@celery.task(name="tasks.email_sync_tasks.summarize_thread_preview")
+def summarize_thread_preview(integration_id: str, gmail_thread_id: str) -> dict[str, Any]:
+    """Generate and persist a mini-model summary preview for one email thread."""
+    sb = get_supabase()
+    integration = _get_integration(sb, integration_id)
+    if not integration:
+        return {"status": "skipped", "reason": "integration_not_found", "integration_id": integration_id}
+
+    user_id = integration["user_id"]
+    thread_rows = (
+        sb.table("email_threads")
+        .select("subject_normalized")
+        .eq("user_id", user_id)
+        .eq("integration_id", integration_id)
+        .eq("gmail_thread_id", gmail_thread_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not thread_rows:
+        return {"status": "skipped", "reason": "thread_not_found", "gmail_thread_id": gmail_thread_id}
+
+    messages = _fetch_thread_messages_for_summary(
+        sb,
+        user_id=user_id,
+        integration_id=integration_id,
+        thread_id=gmail_thread_id,
+    )
+    if not messages:
+        sb.table("email_threads").update(
+            {
+                "ai_summary_preview": "",
+                "ai_summary_updated_at": _now_iso(),
+                "updated_at": _now_iso(),
+            }
+        ).eq("integration_id", integration_id).eq("gmail_thread_id", gmail_thread_id).execute()
+        return {"status": "ok", "gmail_thread_id": gmail_thread_id, "source": "empty_thread"}
+
+    summary = summarize_email_thread_preview(
+        thread_subject=thread_rows[0].get("subject_normalized", ""),
+        messages=messages,
+    )
+    source = "ai"
+    if not summary:
+        summary = _fallback_thread_preview(messages)
+        source = "fallback"
+
+    sb.table("email_threads").update(
+        {
+            "ai_summary_preview": summary or "",
+            "ai_summary_updated_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+    ).eq("integration_id", integration_id).eq("gmail_thread_id", gmail_thread_id).execute()
+
+    return {
+        "status": "ok",
+        "integration_id": integration_id,
+        "gmail_thread_id": gmail_thread_id,
+        "source": source,
+        "summary_length": len(summary or ""),
+    }

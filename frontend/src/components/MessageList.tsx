@@ -11,6 +11,7 @@ interface MessageListProps {
   pendingApproval?: PendingToolApproval | null;
   onResolveApproval?: (approved: boolean) => void;
   conversationId?: string | null;
+  onPasteMessageBody?: (body: string) => void;
 }
 
 export function formatDayLabel(date: Date): string {
@@ -54,6 +55,7 @@ export default function MessageList({
   pendingApproval,
   onResolveApproval,
   conversationId,
+  onPasteMessageBody,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -205,11 +207,14 @@ export default function MessageList({
                 message={msg}
                 toolMeta={toolMeta}
                 displaySources={displaySources}
+                onPasteBody={onPasteMessageBody}
               />
             </Fragment>
           );
         })}
-        {streamingMessage && <MessageBubble message={streamingMessage} />}
+        {streamingMessage && (
+          <MessageBubble message={streamingMessage} onPasteBody={onPasteMessageBody} />
+        )}
         {pendingApproval && onResolveApproval && (
           <ToolApprovalCard
             approval={pendingApproval}

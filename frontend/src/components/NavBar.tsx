@@ -2,10 +2,9 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Brain,
   House,
   MessageSquare,
-  FileText,
+  LibraryBig,
   Link2,
   LogOut,
   Sparkles,
@@ -18,8 +17,7 @@ const NAV_ITEMS = [
   { label: "Home", href: "/", icon: House },
   { label: "Inbox", href: "/chat/inbox", icon: Inbox },
   { label: "Agents", href: "/chat", icon: MessageSquare },
-  { label: "Memories", href: "/chat/memories", icon: Brain },
-  { label: "Documents", href: "/chat/documents", icon: FileText },
+  { label: "Context", href: "/chat/context", icon: LibraryBig },
   { label: "Automations", href: "/chat/automations", icon: Sparkles },
   { label: "Integrations", href: "/chat/integrations", icon: Link2 },
 ] as const;
@@ -41,12 +39,20 @@ export default function NavBar() {
       return (
         pathname === "/chat" ||
         (pathname.startsWith("/chat/") &&
+          !pathname.startsWith("/chat/context") &&
           !pathname.startsWith("/chat/memories") &&
           !pathname.startsWith("/chat/documents") &&
           !pathname.startsWith("/chat/skills") &&
           !pathname.startsWith("/chat/automations") &&
           !pathname.startsWith("/chat/inbox") &&
           !pathname.startsWith("/chat/integrations"))
+      );
+    }
+    if (href === "/chat/context") {
+      return (
+        pathname.startsWith("/chat/context") ||
+        pathname.startsWith("/chat/memories") ||
+        pathname.startsWith("/chat/documents")
       );
     }
     if (href === "/chat/automations") {

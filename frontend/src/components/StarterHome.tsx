@@ -229,7 +229,7 @@ export default function StarterHome({
                         )}
                       </div>
                       <p className="mt-1 line-clamp-1 text-xs text-foreground/55">
-                        {thread.snippet}
+                        {thread.ai_summary_preview || thread.snippet}
                       </p>
                     </div>
                     <p className="shrink-0 text-[11px] text-foreground/45">

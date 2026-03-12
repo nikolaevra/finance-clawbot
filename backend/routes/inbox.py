@@ -124,7 +124,7 @@ def list_threads():
         sb.table("email_threads")
         .select(
             "gmail_thread_id, subject_normalized, participants_json, "
-            "last_message_internal_at, has_unread, snippet"
+            "last_message_internal_at, has_unread, snippet, ai_summary_preview"
         )
         .eq("user_id", g.user_id)
         .eq("integration_id", integration["id"])
@@ -147,7 +147,7 @@ def list_threads():
             sb.table("email_threads")
             .select(
                 "gmail_thread_id, subject_normalized, participants_json, "
-                "last_message_internal_at, has_unread, snippet"
+                "last_message_internal_at, has_unread, snippet, ai_summary_preview"
             )
             .eq("user_id", g.user_id)
             .eq("integration_id", integration["id"])
@@ -210,7 +210,7 @@ def get_thread(thread_id: str):
         sb.table("email_threads")
         .select(
             "gmail_thread_id, subject_normalized, participants_json, "
-            "last_message_internal_at, has_unread, snippet"
+            "last_message_internal_at, has_unread, snippet, ai_summary_preview"
         )
         .eq("user_id", g.user_id)
         .eq("integration_id", integration["id"])
