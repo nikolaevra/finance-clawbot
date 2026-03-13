@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
+  ArrowUp,
   ChevronDown,
   ChevronRight,
   Check,
@@ -25,6 +26,7 @@ import {
 import type { EmailAttachment, EmailMessage, EmailThread, InboxTab } from "@/types";
 import {
   archiveInboxThread,
+  createConversation,
   discardInboxThreadDrafts,
   downloadInboxAttachment,
   fetchInboxThread,
@@ -36,9 +38,13 @@ import {
   sendInboxDraft,
   sendInboxEmail,
 } from "@/lib/api";
+import { useSkills } from "@/lib/hooks/useSkills";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 type ComposerMode = "new" | "reply" | "forward";
 const THREAD_PAGE_SIZE = 75;
+const MAX_THREADS_FOR_CONTEXT = 20;
 
 const TABS: Array<{ id: InboxTab; label: string }> = [
   { id: "inbox", label: "Inbox" },
@@ -155,6 +161,29 @@ function getCollapsedMessagePreview(message: EmailMessage): string {
   return raw.replace(/\s+/g, " ").trim();
 }
 
+function buildSelectedThreadsContext(threads: EmailThread[]): string {
+  const selected = threads.slice(0, MAX_THREADS_FOR_CONTEXT);
+  const lines = selected.map((thread, index) => {
+    const sender = getSenderLabel(thread);
+    const subject = thread.subject_normalized || "(No subject)";
+    const preview = thread.ai_summary_preview || thread.snippet || "(No preview)";
+    const when = formatTime(thread.last_message_internal_at) || "Unknown time";
+    return `${index + 1}. From: ${sender}; Subject: ${subject}; Last message: ${when}; Preview: ${preview}`;
+  });
+
+  const remaining = threads.length - selected.length;
+  if (remaining > 0) {
+    lines.push(`...and ${remaining} more selected threads not listed.`);
+  }
+
+  return [
+    "Selected inbox thread context:",
+    ...lines,
+    "",
+    "Use this context while answering the user's next request.",
+  ].join("\n");
+}
+
 export default function InboxPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -190,12 +219,19 @@ export default function InboxPage() {
   const [composeBody, setComposeBody] = useState("");
   const [composeCc, setComposeCc] = useState("");
   const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
+  const [bulkPrompt, setBulkPrompt] = useState("");
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
+  const [isBulkSending, setIsBulkSending] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const routeEmailId = searchParams.get("emailId");
   const loadContextRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const listEndRef = useRef<HTMLDivElement | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const lastMessageRef = useRef<HTMLElement | null>(null);
+  const { skills, loading: skillsLoading } = useSkills();
+  const enabledSkills = useMemo(() => skills.filter((skill) => skill.enabled), [skills]);
 
   const selectedThread = useMemo(() => {
     const fromList = threads.find((t) => t.gmail_thread_id === activeThreadId) || null;
@@ -253,6 +289,35 @@ export default function InboxPage() {
       );
     });
   }, [searchQuery, threads]);
+
+  const selectedThreads = useMemo(
+    () => threads.filter((thread) => selectedThreadIds.has(thread.gmail_thread_id)),
+    [threads, selectedThreadIds]
+  );
+  const hasSelectedThreads = selectedThreadIds.size > 0;
+  const allVisibleSelected =
+    filteredThreads.length > 0 &&
+    filteredThreads.every((thread) => selectedThreadIds.has(thread.gmail_thread_id));
+
+  const clearSelection = useCallback(() => {
+    setSelectedThreadIds(new Set());
+  }, []);
+
+  const toggleThreadSelection = useCallback((threadId: string) => {
+    setSelectedThreadIds((current) => {
+      const next = new Set(current);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedThreadIds(new Set(filteredThreads.map((thread) => thread.gmail_thread_id)));
+  }, [filteredThreads]);
 
   const resetAndLoadFirstPage = useCallback(async () => {
     const nextContext = loadContextRef.current + 1;
@@ -369,6 +434,17 @@ export default function InboxPage() {
     setActiveThreadId(routeEmailId);
     setIsPreviewOpen(true);
   }, [activeThreadId, isPreviewOpen, routeEmailId]);
+
+  useEffect(() => {
+    setSelectedThreadIds((current) => {
+      if (current.size === 0) return current;
+      const availableThreadIds = new Set(threads.map((thread) => thread.gmail_thread_id));
+      const next = new Set(
+        Array.from(current).filter((threadId) => availableThreadIds.has(threadId))
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [threads]);
 
   useEffect(() => {
     if (!isPreviewOpen || !activeThreadId) return;
@@ -540,6 +616,12 @@ export default function InboxPage() {
       if (activeThreadId === threadId) {
         closePreview();
       }
+      setSelectedThreadIds((current) => {
+        if (!current.has(threadId)) return current;
+        const next = new Set(current);
+        next.delete(threadId);
+        return next;
+      });
       setRefreshTick((n) => n + 1);
     } catch (err) {
       setError(
@@ -552,6 +634,38 @@ export default function InboxPage() {
     } finally {
       setArchivingThreadId(null);
     }
+  };
+
+  const submitBulkPrompt = async () => {
+    const prompt = bulkPrompt.trim();
+    if (!prompt || isBulkSending || selectedThreads.length === 0) return;
+
+    setIsBulkSending(true);
+    setError(null);
+    try {
+      const contextBlock = buildSelectedThreadsContext(selectedThreads);
+      const message = `${contextBlock}\n\nUser request:\n${prompt}`;
+      const conversation = await createConversation("Inbox Agent Chat");
+      const params = new URLSearchParams({ q: message });
+      if (selectedSkillName) {
+        params.set("skill", selectedSkillName);
+      }
+      router.push(`/chat/${conversation.id}?${params.toString()}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start agent chat");
+    } finally {
+      setIsBulkSending(false);
+    }
+  };
+
+  const handleRefresh = () => {
+    clearSelection();
+    setRefreshTick((n) => n + 1);
+  };
+
+  const handleTabChange = (tab: InboxTab) => {
+    setActiveTab(tab);
+    clearSelection();
   };
 
   const sendSelectedDraft = async () => {
@@ -660,7 +774,7 @@ export default function InboxPage() {
             </label>
             <div className="ml-auto flex items-center gap-2">
               <button
-                onClick={() => setRefreshTick((n) => n + 1)}
+                onClick={handleRefresh}
                 className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.04]"
               >
                 <RefreshCw size={12} />
@@ -676,11 +790,11 @@ export default function InboxPage() {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-1">
+          <div className="mt-3 flex flex-wrap items-center gap-1">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => handleTabChange(tab.id)}
                 className={`rounded-lg px-2.5 py-1.5 text-xs ${
                   activeTab === tab.id
                     ? "bg-blue-500/15 text-blue-400"
@@ -690,6 +804,23 @@ export default function InboxPage() {
                 {tab.label}
               </button>
             ))}
+            <div className="ml-auto flex items-center gap-1.5">
+              <button
+                onClick={allVisibleSelected ? clearSelection : selectAllVisible}
+                disabled={filteredThreads.length === 0}
+                className="rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.04] disabled:opacity-50"
+              >
+                {allVisibleSelected ? "Clear visible" : "Select visible"}
+              </button>
+              {hasSelectedThreads && (
+                <button
+                  onClick={clearSelection}
+                  className="rounded-lg px-2.5 py-1.5 text-xs text-foreground/70 hover:bg-foreground/[0.04]"
+                >
+                  Clear ({selectedThreadIds.size})
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -708,11 +839,27 @@ export default function InboxPage() {
             </div>
           ) : (
             <div className="divide-y divide-foreground/[0.06]">
-              {filteredThreads.map((thread) => (
+              {filteredThreads.map((thread) => {
+                const isSelected = selectedThreadIds.has(thread.gmail_thread_id);
+                return (
                 <article
                   key={thread.gmail_thread_id}
-                  className="group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-foreground/[0.03]"
+                  className={`group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-foreground/[0.03] ${
+                    isSelected ? "bg-blue-500/[0.08]" : ""
+                  }`}
                 >
+                  <button
+                    type="button"
+                    onClick={() => toggleThreadSelection(thread.gmail_thread_id)}
+                    className={`mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                      isSelected
+                        ? "border-blue-400 bg-blue-500 text-white"
+                        : "border-foreground/25 bg-background text-transparent hover:border-foreground/45"
+                    }`}
+                    aria-label={isSelected ? "Deselect thread" : "Select thread"}
+                  >
+                    <Check size={11} />
+                  </button>
                   <button
                     onClick={() => openThreadPreview(thread.gmail_thread_id)}
                     className="flex min-w-0 flex-1 items-start gap-3 text-left"
@@ -773,7 +920,8 @@ export default function InboxPage() {
                     </button>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
           {!loadingThreads && threads.length > 0 && (
@@ -795,6 +943,97 @@ export default function InboxPage() {
           )}
         </div>
       </div>
+
+      {hasSelectedThreads && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[4.5rem] z-40 px-3 md:bottom-4 md:px-6">
+          <div className="pointer-events-auto mx-auto w-full max-w-5xl rounded-2xl border border-blue-400/30 bg-background/95 p-3 shadow-2xl backdrop-blur">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-xs text-foreground/70">
+                {selectedThreadIds.size} selected thread{selectedThreadIds.size === 1 ? "" : "s"}
+              </p>
+              <button
+                onClick={clearSelection}
+                className="rounded-md px-2 py-1 text-xs text-foreground/60 hover:bg-foreground/[0.06]"
+              >
+                Clear
+              </button>
+            </div>
+            <textarea
+              value={bulkPrompt}
+              onChange={(event) => setBulkPrompt(event.target.value)}
+              placeholder="Ask the agent to analyze or act on the selected inbox threads..."
+              rows={3}
+              className="w-full resize-y rounded-xl border border-foreground/[0.12] bg-background px-3 py-2 text-sm outline-none focus:border-blue-400/60"
+            />
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <Popover open={skillsOpen} onOpenChange={setSkillsOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 rounded-full px-2.5 text-xs text-blue-500 hover:bg-blue-500/10 hover:text-blue-500"
+                    disabled={isBulkSending}
+                  >
+                    <Sparkles size={13} />
+                    <span className="max-w-[12rem] truncate">
+                      {selectedSkillName || "Skills"}
+                    </span>
+                    <ChevronDown size={12} />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  className="w-[18rem] rounded-xl border-foreground/[0.12] p-1.5"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSkillName(null);
+                      setSkillsOpen(false);
+                    }}
+                    className="flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm text-foreground/80 transition-colors hover:bg-foreground/[0.06]"
+                  >
+                    <span>Default (no skill)</span>
+                    {!selectedSkillName ? <Check size={14} className="text-blue-500" /> : null}
+                  </button>
+                  {skillsLoading ? (
+                    <p className="px-2.5 py-2 text-xs text-foreground/45">Loading skills...</p>
+                  ) : enabledSkills.length > 0 ? (
+                    enabledSkills.map((skill) => (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSkillName(skill.name);
+                          setSkillsOpen(false);
+                        }}
+                        className="flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm text-foreground/80 transition-colors hover:bg-foreground/[0.06]"
+                      >
+                        <span className="truncate">{skill.name}</span>
+                        {selectedSkillName === skill.name ? (
+                          <Check size={14} className="text-blue-500" />
+                        ) : null}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-2.5 py-2 text-xs text-foreground/45">No active skills found</p>
+                  )}
+                </PopoverContent>
+              </Popover>
+              <button
+                onClick={submitBulkPrompt}
+                disabled={isBulkSending || !bulkPrompt.trim() || selectedThreadIds.size === 0}
+                className="inline-flex h-9 items-center gap-1 rounded-full bg-blue-500 px-3 text-sm font-medium text-white hover:bg-blue-400 disabled:opacity-50"
+              >
+                {isBulkSending ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isPreviewOpen && (
         <div

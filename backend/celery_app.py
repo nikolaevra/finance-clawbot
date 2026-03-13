@@ -19,6 +19,16 @@ from logging_config import setup_logging
 
 celery = Celery("finance_clawbot")
 
+_task_includes = [
+    "tasks.document_tasks",
+    "tasks.analysis_tasks",
+    "tasks.memory_tasks",
+    "tasks.skill_automation_tasks",
+    "tasks.email_sync_tasks",
+]
+if Config.ENABLE_GMAIL_WATCHER:
+    _task_includes.append("tasks.gmail_watch_tasks")
+
 celery.conf.update(
     broker_url=Config.CELERY_BROKER_URL,
     result_backend=Config.CELERY_RESULT_BACKEND,
@@ -31,14 +41,7 @@ celery.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     result_expires=86400,  # 24 hours
-    include=[
-        "tasks.document_tasks",
-        "tasks.analysis_tasks",
-        "tasks.memory_tasks",
-        "tasks.skill_automation_tasks",
-        "tasks.gmail_watch_tasks",
-        "tasks.email_sync_tasks",
-    ],
+    include=_task_includes,
 )
 
 _flask_app = None
@@ -73,4 +76,7 @@ def _configure_celery_logging(*args, **kwargs):
 @celery.on_after_configure.connect
 def _setup_beat_schedule(sender, **kwargs):
     from tasks.scheduled import beat_schedule
-    sender.conf.beat_schedule = beat_schedule
+    final_schedule = dict(beat_schedule)
+    if not Config.ENABLE_GMAIL_WATCHER:
+        final_schedule.pop("refresh-gmail-watches", None)
+    sender.conf.beat_schedule = final_schedule

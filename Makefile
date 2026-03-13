@@ -1,4 +1,6 @@
-.PHONY: dev stop install
+.PHONY: dev dev-local stop install
+
+LOCAL_RUNTIME_ENV=ENABLE_GMAIL_WATCHER=false
 
 dev:
 	@trap 'kill 0; redis-cli shutdown 2>/dev/null' EXIT; \
@@ -7,6 +9,15 @@ dev:
 		celery -A celery_app.celery worker --beat --loglevel=info & \
 	cd backend && source venv/bin/activate && \
 		python run.py & \
+	cd frontend && npm run dev
+
+dev-local:
+	@trap 'kill 0; redis-cli shutdown 2>/dev/null' EXIT; \
+	redis-server --port 6379 --daemonize yes && \
+	cd backend && source venv/bin/activate && \
+		$(LOCAL_RUNTIME_ENV) celery -A celery_app.celery worker --beat --loglevel=info & \
+	cd backend && source venv/bin/activate && \
+		$(LOCAL_RUNTIME_ENV) python run.py & \
 	cd frontend && npm run dev
 
 stop:

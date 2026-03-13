@@ -57,6 +57,12 @@ make dev
 
 This launches Redis, the Flask backend (port 5001), the Celery worker + beat scheduler, and the Next.js frontend (port 3000). Ctrl+C stops all processes.
 
+If you want local runtime without Gmail watcher registration tasks, use:
+
+```bash
+make dev-local
+```
+
 To force-stop any leftover processes:
 
 ```bash

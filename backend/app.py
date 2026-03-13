@@ -110,7 +110,7 @@ def create_app() -> Flask:
 
     # Bootstrap Gmail Pub/Sub watches after API process boot.
     # Keep this out of worker role to avoid duplicate initialization paths.
-    if os.getenv("SERVICE_ROLE", "api") != "worker":
+    if os.getenv("SERVICE_ROLE", "api") != "worker" and Config.ENABLE_GMAIL_WATCHER:
         try:
             from tasks.gmail_watch_tasks import ensure_gmail_watches_on_startup
 
