@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
@@ -184,7 +184,7 @@ function buildSelectedThreadsContext(threads: EmailThread[]): string {
   ].join("\n");
 }
 
-export default function InboxPage() {
+function InboxPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1408,5 +1408,19 @@ export default function InboxPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function InboxPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[50vh] items-center justify-center px-4 text-sm text-foreground/70">
+          Loading inbox...
+        </div>
+      }
+    >
+      <InboxPageContent />
+    </Suspense>
   );
 }
