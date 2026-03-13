@@ -171,6 +171,7 @@ export default function InboxPage() {
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [activeThreadPreview, setActiveThreadPreview] = useState<EmailThread | null>(null);
   const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
   const [messages, setMessages] = useState<EmailMessage[]>([]);
   const [attachmentsByMessage, setAttachmentsByMessage] = useState<Record<string, EmailAttachment[]>>(
@@ -196,10 +197,12 @@ export default function InboxPage() {
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const lastMessageRef = useRef<HTMLElement | null>(null);
 
-  const selectedThread = useMemo(
-    () => threads.find((t) => t.gmail_thread_id === activeThreadId) || null,
-    [threads, activeThreadId]
-  );
+  const selectedThread = useMemo(() => {
+    const fromList = threads.find((t) => t.gmail_thread_id === activeThreadId) || null;
+    if (fromList) return fromList;
+    if (activeThreadPreview?.gmail_thread_id === activeThreadId) return activeThreadPreview;
+    return null;
+  }, [threads, activeThreadId, activeThreadPreview]);
 
   const latestMessage = messages[messages.length - 1];
   const hasDraftMessages = useMemo(
@@ -303,6 +306,7 @@ export default function InboxPage() {
     try {
       const data = await fetchInboxThread(threadId);
       const nextMessages = data.messages || [];
+      setActiveThreadPreview(data.thread || null);
       setMessages(nextMessages);
       setExpandedMessageIds(() => {
         if (!nextMessages.length) return new Set();
@@ -438,6 +442,7 @@ export default function InboxPage() {
     closeComposer();
     setIsPreviewOpen(false);
     setActiveThreadId(null);
+    setActiveThreadPreview(null);
     setMessages([]);
     setExpandedMessageIds(new Set());
     setAttachmentsByMessage({});
@@ -446,6 +451,7 @@ export default function InboxPage() {
   const openThreadPreview = (threadId: string, mode: ComposerMode | null = null) => {
     syncInboxUrl(threadId);
     setActiveThreadId(threadId);
+    setActiveThreadPreview(null);
     setIsPreviewOpen(true);
     closeComposer();
     if (mode) {
@@ -456,6 +462,7 @@ export default function InboxPage() {
   const openNewMessageModal = () => {
     syncInboxUrl(null);
     setActiveThreadId(null);
+    setActiveThreadPreview(null);
     setMessages([]);
     setExpandedMessageIds(new Set());
     setAttachmentsByMessage({});
