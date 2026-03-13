@@ -239,7 +239,7 @@ export default function SkillsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-6 pb-24 md:pb-6">
+    <div className="w-full px-6 py-6 pb-24 md:pb-6">
       <div className="flex items-center gap-3 mb-8">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/10">
           <Sparkles size={20} className="text-blue-400" strokeWidth={1.5} />
@@ -354,25 +354,33 @@ export default function SkillsPage() {
                       </div>
                     </TableCell>
                     <TableCell className="py-3 align-top">
-                      <button
-                        type="button"
-                        onClick={() => handleToggle(skill.name, skill.enabled)}
-                        disabled={togglingId === skill.name}
-                        className={`inline-flex min-w-24 items-center justify-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors disabled:opacity-50 ${
-                          skill.enabled
-                            ? "bg-emerald-500/10 text-emerald-400 ring-emerald-400/30 hover:bg-emerald-500/15"
-                            : "bg-foreground/[0.04] text-foreground/60 ring-foreground/[0.14] hover:bg-foreground/[0.08]"
-                        }`}
-                        title={skill.enabled ? "Disable automation" : "Enable automation"}
-                      >
+                      <div className="inline-flex min-w-24 items-center">
                         {togglingId === skill.name ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : skill.enabled ? (
-                          "Enabled"
+                          <span className="inline-flex items-center gap-1 rounded-full bg-foreground/[0.04] px-2.5 py-1 text-xs text-foreground/65 ring-1 ring-foreground/[0.14]">
+                            <Loader2 size={12} className="animate-spin" />
+                            Saving
+                          </span>
                         ) : (
-                          "Disabled"
+                          <select
+                            value={skill.enabled ? "enabled" : "disabled"}
+                            onChange={(event) => {
+                              const nextEnabled = event.target.value === "enabled";
+                              if (nextEnabled !== skill.enabled) {
+                                void handleToggle(skill.name, skill.enabled);
+                              }
+                            }}
+                            className={`h-8 rounded-full px-2.5 text-xs font-medium ring-1 outline-none transition-colors ${
+                              skill.enabled
+                                ? "bg-emerald-500/10 text-emerald-400 ring-emerald-400/30"
+                                : "bg-foreground/[0.04] text-foreground/60 ring-foreground/[0.14]"
+                            }`}
+                            aria-label={`Set ${skill.name} status`}
+                          >
+                            <option value="enabled">Enabled</option>
+                            <option value="disabled">Disabled</option>
+                          </select>
                         )}
-                      </button>
+                      </div>
                     </TableCell>
                     <TableCell className="py-3 text-xs text-foreground/70">{formatLatestRun(skill)}</TableCell>
                     <TableCell className="py-3 text-xs text-foreground/70">

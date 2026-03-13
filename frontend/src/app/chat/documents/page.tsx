@@ -10,9 +10,17 @@ import {
   AlertCircle,
   File,
   FileSpreadsheet,
+  Link2,
+  ExternalLink,
+  Cloud,
 } from "lucide-react";
 import type { UserDocument } from "@/types";
-import { fetchDocuments, uploadDocument, deleteDocument } from "@/lib/api";
+import {
+  fetchDocuments,
+  uploadDocument,
+  deleteDocument,
+  linkGoogleDriveDocument,
+} from "@/lib/api";
 
 const ACCEPTED_TYPES: Record<string, string> = {
   "application/pdf": "PDF",
@@ -50,6 +58,10 @@ function FileIcon({ fileType }: { fileType: string }) {
   }
 }
 
+function DriveIcon() {
+  return <Cloud size={18} className="text-sky-400/80" strokeWidth={1.5} />;
+}
+
 function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case "processing":
@@ -84,6 +96,8 @@ export default function DocumentsPage() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [driveInput, setDriveInput] = useState("");
+  const [linkingDrive, setLinkingDrive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDocuments = useCallback(async () => {
@@ -181,6 +195,26 @@ export default function DocumentsPage() {
     []
   );
 
+  const handleLinkGoogleDrive = useCallback(async () => {
+    if (!driveInput.trim()) {
+      setError("Paste a Google Drive file URL or file ID first.");
+      return;
+    }
+    setLinkingDrive(true);
+    setError(null);
+    try {
+      await linkGoogleDriveDocument(driveInput);
+      setDriveInput("");
+      await loadDocuments();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to link Google Drive file"
+      );
+    } finally {
+      setLinkingDrive(false);
+    }
+  }, [driveInput, loadDocuments]);
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -274,6 +308,32 @@ export default function DocumentsPage() {
               </>
             )}
           </div>
+          <div className="space-y-2 rounded-2xl bg-foreground/[0.03] ring-1 ring-foreground/[0.08] p-3">
+            <p className="text-xs font-medium text-foreground/45">
+              Link from Google Drive
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={driveInput}
+                onChange={(e) => setDriveInput(e.target.value)}
+                placeholder="Paste Google Drive URL or file ID"
+                className="min-w-0 flex-1 rounded-xl bg-foreground/[0.03] px-3 py-2 text-sm text-foreground/80 ring-1 ring-foreground/[0.08] outline-none placeholder:text-foreground/30 focus:ring-blue-400/40"
+              />
+              <button
+                onClick={handleLinkGoogleDrive}
+                disabled={linkingDrive}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-500/15 px-3 py-2 text-xs font-medium text-blue-300 ring-1 ring-blue-400/20 hover:bg-blue-500/20 disabled:opacity-50"
+              >
+                {linkingDrive ? (
+                  <Loader2 size={12} className="animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <Link2 size={12} strokeWidth={1.5} />
+                )}
+                Link
+              </button>
+            </div>
+          </div>
 
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -291,7 +351,11 @@ export default function DocumentsPage() {
                     className="flex items-center gap-3 rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3.5 transition-all hover:bg-foreground/[0.07]"
                   >
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.06]">
-                      <FileIcon fileType={doc.file_type} />
+                      {doc.source === "google_drive" ? (
+                        <DriveIcon />
+                      ) : (
+                        <FileIcon fileType={doc.file_type} />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground/75">
@@ -308,6 +372,15 @@ export default function DocumentsPage() {
                       </div>
                     </div>
                     <StatusBadge status={doc.status} />
+                    {doc.source === "google_drive" && doc.source_web_url && (
+                      <button
+                        onClick={() => window.open(doc.source_web_url || "", "_blank", "noopener,noreferrer")}
+                        className="shrink-0 rounded-lg p-2 text-foreground/30 hover:text-sky-300 hover:bg-sky-400/10"
+                        title="Open in Google Drive"
+                      >
+                        <ExternalLink size={14} strokeWidth={1.5} />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(doc.id, doc.filename)}
                       className="shrink-0 rounded-lg p-2 text-foreground/20 hover:text-red-400 hover:bg-red-400/10"

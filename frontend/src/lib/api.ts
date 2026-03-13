@@ -294,6 +294,44 @@ export async function uploadDocument(file: File): Promise<UserDocument> {
   return res.json();
 }
 
+function extractGoogleDriveFileId(input: string): string {
+  const raw = input.trim();
+  if (!raw) return "";
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    const fileMatch = url.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (fileMatch?.[1]) return fileMatch[1];
+    const idParam = url.searchParams.get("id");
+    if (idParam) return idParam;
+  } catch {
+    // ignore parse errors and return as-is for backend validation
+  }
+  return raw;
+}
+
+export async function linkGoogleDriveDocument(
+  fileIdOrUrl: string
+): Promise<UserDocument> {
+  const headers = await getAuthHeaders();
+  const fileId = extractGoogleDriveFileId(fileIdOrUrl);
+  if (!fileId) {
+    throw new Error("Google Drive file URL or file ID is required");
+  }
+  const endpoint = "/api/documents/link-google-drive";
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  if (!res.ok) {
+    await logApiFailure(endpoint, "POST", res);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to link Google Drive file");
+  }
+  return res.json();
+}
+
 export async function deleteDocument(id: string): Promise<void> {
   const headers = await getAuthHeaders();
   const res = await fetch(`${API_URL}/api/documents/${id}`, {

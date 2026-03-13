@@ -24,6 +24,47 @@ def _doc_service():
     return document_service
 
 
+def _get_google_workspace_credentials() -> str | None:
+    """Return active Google Workspace credentials JSON for the current user."""
+    user_id = getattr(g, "user_id", None)
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("integrations")
+            .select("account_token")
+            .eq("user_id", user_id)
+            .eq("provider", "google_workspace")
+            .eq("status", "active")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]["account_token"]
+    except Exception:
+        log.exception("google workspace creds lookup failed user=%s", user_id)
+    return None
+
+
+def _persist_google_workspace_credentials(token: str | None) -> None:
+    if not token:
+        return
+    user_id = getattr(g, "user_id", None)
+    sb = get_supabase()
+    latest = (
+        sb.table("integrations")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("provider", "google_workspace")
+        .eq("status", "active")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if latest.data:
+        sb.table("integrations").update({"account_token": token}).eq("id", latest.data[0]["id"]).execute()
+
+
 def _log_document_access(tool_name: str, source_file: str | None = None) -> None:
     """Best-effort insert into memory_access_log for document tool usage."""
     try:
@@ -118,7 +159,7 @@ def document_read(filename: str) -> str:
 
     result = (
         sb.table("documents")
-        .select("id, filename, extracted_text, status")
+        .select("*")
         .eq("user_id", user_id)
         .eq("filename", filename)
         .execute()
@@ -128,6 +169,19 @@ def document_read(filename: str) -> str:
         return f"Document not found: '{filename}'. Use document_list to see available documents."
 
     doc = result.data[0]
+
+    if doc.get("source") == "google_drive":
+        creds = _get_google_workspace_credentials()
+        if creds:
+            try:
+                doc, refreshed = _doc_service().refresh_google_drive_document_if_stale(
+                    user_id,
+                    doc,
+                    creds,
+                )
+                _persist_google_workspace_credentials(refreshed)
+            except Exception:
+                log.exception("document_read drive refresh failed user=%s filename=%s", user_id, filename)
 
     if doc["status"] != "ready":
         return f"Document '{filename}' is still being processed (status: {doc['status']})."

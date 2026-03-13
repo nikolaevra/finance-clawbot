@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import secrets
+from pathlib import Path
 from typing import Any
 
 from google.auth.transport.requests import Request
@@ -148,7 +149,7 @@ def drive_get_file_metadata(
     drive, updated = _build_service("drive", "v3", credentials_json)
     result = drive.files().get(
         fileId=file_id,
-        fields="id,name,mimeType,modifiedTime,createdTime,webViewLink,parents,size",
+        fields="id,name,mimeType,modifiedTime,createdTime,webViewLink,parents,size,version,md5Checksum",
     ).execute()
     return result, updated
 
@@ -188,6 +189,78 @@ def drive_get_text_content(
         "content": content,
         "source": "drive_file",
     }, (fresh_update or updated)
+
+
+_GOOGLE_EXPORT_MAP: dict[str, tuple[str, str]] = {
+    "application/vnd.google-apps.document": (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".docx",
+    ),
+    "application/vnd.google-apps.spreadsheet": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsx",
+    ),
+    "application/vnd.google-apps.presentation": ("application/pdf", ".pdf"),
+}
+
+
+def _sanitize_drive_filename(name: str, fallback: str = "drive_file") -> str:
+    cleaned = (name or "").strip().replace("/", "_")
+    return cleaned or fallback
+
+
+def drive_download_for_ingestion(
+    credentials_json: str,
+    file_id: str,
+) -> tuple[dict[str, Any], str | None]:
+    """
+    Download a Drive file (or export native Workspace files) for local ingestion.
+
+    Returns payload with normalized file bytes + metadata snapshot used by the
+    documents service for ingest and stale checks.
+    """
+    metadata, updated = drive_get_file_metadata(credentials_json, file_id)
+    mime_type = metadata.get("mimeType", "")
+    filename = _sanitize_drive_filename(metadata.get("name", "drive_file"))
+
+    drive, fresh_update = _build_service("drive", "v3", credentials_json)
+    fh = io.BytesIO()
+
+    export = _GOOGLE_EXPORT_MAP.get(mime_type)
+    if export:
+        export_mime, default_ext = export
+        current_ext = Path(filename).suffix.lower()
+        if not current_ext:
+            filename = f"{filename}{default_ext}"
+        request = drive.files().export_media(fileId=file_id, mimeType=export_mime)
+        content_type = export_mime
+    else:
+        request = drive.files().get_media(fileId=file_id)
+        content_type = mime_type or "application/octet-stream"
+
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    payload = {
+        "file": {
+            "id": metadata.get("id"),
+            "name": metadata.get("name"),
+            "mimeType": mime_type,
+            "webViewLink": metadata.get("webViewLink"),
+            "modifiedTime": metadata.get("modifiedTime"),
+            "version": str(metadata.get("version") or ""),
+            "md5Checksum": metadata.get("md5Checksum"),
+            "size": int(metadata.get("size") or len(fh.getvalue()) or 0),
+        },
+        "ingestion": {
+            "filename": filename,
+            "content_type": content_type,
+            "bytes": fh.getvalue(),
+        },
+    }
+    return payload, (fresh_update or updated)
 
 
 def drive_create_text_file(

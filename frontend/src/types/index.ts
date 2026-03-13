@@ -100,6 +100,12 @@ export interface UserDocument {
   file_size: number;
   storage_path: string;
   status: "processing" | "ready" | "error";
+  source?: "upload" | "google_drive";
+  source_external_id?: string | null;
+  source_web_url?: string | null;
+  source_version?: string | null;
+  source_modified_time?: string | null;
+  source_checksum?: string | null;
   created_at: string;
 }
 
