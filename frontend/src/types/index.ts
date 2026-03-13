@@ -197,6 +197,8 @@ export type InboxTab = "inbox" | "all_mail" | "skip_inbox" | "unread" | "sent" |
 
 export interface EmailThread {
   gmail_thread_id: string;
+  latest_message_id?: string;
+  message_ids?: string[];
   subject_normalized: string;
   participants_json: Array<{ name: string; email: string }>;
   last_message_internal_at: string | null;

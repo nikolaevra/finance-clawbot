@@ -170,6 +170,15 @@ function buildSelectedThreadsContext(threads: EmailThread[]): string {
     const when = formatTime(thread.last_message_internal_at) || "Unknown time";
     return `${index + 1}. From: ${sender}; Subject: ${subject}; Last message: ${when}; Preview: ${preview}`;
   });
+  const threadMetadata = selected.map((thread) => ({
+    gmail_thread_id: thread.gmail_thread_id,
+    latest_message_id: thread.latest_message_id || null,
+    message_ids: thread.message_ids || [],
+    subject: thread.subject_normalized || "",
+    latest_sender_email: thread.latest_sender_email || "",
+    last_message_internal_at: thread.last_message_internal_at,
+  }));
+  const metadataJson = JSON.stringify(threadMetadata, null, 2);
 
   const remaining = threads.length - selected.length;
   if (remaining > 0) {
@@ -179,6 +188,11 @@ function buildSelectedThreadsContext(threads: EmailThread[]): string {
   return [
     "Selected inbox thread context:",
     ...lines,
+    "",
+    "Selected inbox thread metadata (from local DB cache):",
+    metadataJson,
+    "",
+    "Use message IDs from this metadata when you need to fetch full messages via tool calls.",
     "",
     "Use this context while answering the user's next request.",
   ].join("\n");
@@ -1116,18 +1130,15 @@ function InboxPageContent() {
 
                   {selectedThread && (
                     <div className="my-2 px-2 md:my-3 md:px-3">
-                      <div className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-3xl border border-blue-300/30 bg-[radial-gradient(circle_at_50%_0%,rgba(96,165,250,0.3),rgba(59,130,246,0.09)_42%,rgba(15,23,42,0.04)_100%)] px-6 py-6 shadow-[0_22px_70px_-34px_rgba(59,130,246,0.95)] md:px-8 md:py-7">
-                        <div className="pointer-events-none absolute inset-x-12 top-0 h-20 rounded-full bg-blue-300/20 blur-3xl" />
-                        <div className="pointer-events-none absolute -left-14 top-1/2 h-28 w-28 -translate-y-1/2 rounded-full bg-indigo-300/10 blur-3xl" />
-                        <div className="pointer-events-none absolute -right-14 top-1/2 h-28 w-28 -translate-y-1/2 rounded-full bg-cyan-300/10 blur-3xl" />
-                        <div className="relative">
-                          <div className="mb-3 flex items-center justify-center gap-2 text-blue-200/95">
+                      <div className="w-full rounded-xl border border-blue-500/60 bg-card px-4 py-3 md:px-5 md:py-4">
+                        <div>
+                          <div className="mb-2 flex items-center gap-2 text-blue-700 dark:text-blue-300">
                             <Sparkles size={15} />
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.2em]">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em]">
                               AI-Generated Thread Summary
                             </p>
                           </div>
-                          <p className="mx-auto max-w-3xl text-center text-[15px] leading-relaxed text-foreground/95">
+                          <p className="text-sm leading-6 text-foreground">
                             {selectedThread.ai_summary_preview ||
                               selectedThread.snippet ||
                               "No summary available."}

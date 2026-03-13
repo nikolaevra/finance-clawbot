@@ -23,6 +23,7 @@ from tasks.email_sync_tasks import hydrate_message_bodies, sync_gmail_history_de
 
 inbox_bp = Blueprint("inbox", __name__)
 log = logging.getLogger(__name__)
+MAX_THREAD_MESSAGE_IDS_IN_LIST = 25
 
 
 def _get_gmail_integration(user_id: str) -> dict | None:
@@ -170,7 +171,7 @@ def _enrich_threads_with_list_metadata(
 
     email_rows = (
         sb.table("emails")
-        .select("gmail_thread_id, from_json, has_attachments, internal_date_ts")
+        .select("gmail_thread_id, gmail_message_id, from_json, has_attachments, internal_date_ts")
         .eq("user_id", user_id)
         .eq("integration_id", integration_id)
         .in_("gmail_thread_id", thread_ids)
@@ -180,6 +181,8 @@ def _enrich_threads_with_list_metadata(
     ).data or []
 
     latest_sender_by_thread: dict[str, tuple[str, str]] = {}
+    latest_message_id_by_thread: dict[str, str] = {}
+    message_ids_by_thread: dict[str, list[str]] = {}
     has_attachments_by_thread: dict[str, bool] = {}
     for email in email_rows:
         thread_id = email.get("gmail_thread_id")
@@ -189,6 +192,14 @@ def _enrich_threads_with_list_metadata(
         has_attachments_by_thread[thread_id] = has_attachments_by_thread.get(thread_id, False) or bool(
             email.get("has_attachments")
         )
+
+        message_id = (email.get("gmail_message_id") or "").strip()
+        if message_id:
+            if thread_id not in latest_message_id_by_thread:
+                latest_message_id_by_thread[thread_id] = message_id
+            message_ids_by_thread.setdefault(thread_id, [])
+            if len(message_ids_by_thread[thread_id]) < MAX_THREAD_MESSAGE_IDS_IN_LIST:
+                message_ids_by_thread[thread_id].append(message_id)
 
         if thread_id in latest_sender_by_thread:
             continue
@@ -211,6 +222,8 @@ def _enrich_threads_with_list_metadata(
                 "latest_sender_name": sender_name,
                 "latest_sender_email": sender_email,
                 "has_attachments": bool(has_attachments_by_thread.get(thread_id or "", False)),
+                "latest_message_id": latest_message_id_by_thread.get(thread_id or ""),
+                "message_ids": message_ids_by_thread.get(thread_id or "", []),
             }
         )
     return enriched
