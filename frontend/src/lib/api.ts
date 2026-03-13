@@ -393,16 +393,27 @@ export async function connectFloat(apiToken: string): Promise<Integration> {
   return res.json();
 }
 
-export async function getGmailAuthUrl(): Promise<{ auth_url: string }> {
+export async function getGmailAuthUrl(
+  provider: "gmail" | "google_workspace" = "gmail"
+): Promise<{ auth_url: string }> {
   const headers = await getAuthHeaders();
-  const res = await fetch(`${API_URL}/api/integrations/gmail/auth-url`, {
+  const endpoint =
+    provider === "google_workspace"
+      ? "/api/integrations/google-workspace/auth-url"
+      : "/api/integrations/gmail/auth-url";
+  const res = await fetch(`${API_URL}${endpoint}`, {
     method: "POST",
     headers,
   });
   if (!res.ok) {
-    await logApiFailure("/api/integrations/gmail/auth-url", "POST", res);
+    await logApiFailure(endpoint, "POST", res);
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to get Gmail auth URL");
+    throw new Error(
+      body.error ||
+        (provider === "google_workspace"
+          ? "Failed to get Google Workspace auth URL"
+          : "Failed to get Gmail auth URL")
+    );
   }
   return res.json();
 }

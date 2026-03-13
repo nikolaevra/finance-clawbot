@@ -113,6 +113,7 @@ Backend (Railway):
 - `CELERY_RESULT_BACKEND` (Railway Redis URL, usually `/1`)
 - `MERGE_API_KEY` (if using accounting integrations)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (if using Gmail)
+- `GOOGLE_WORKSPACE_REDIRECT_URI` (if using Google Workspace Drive/Docs/Sheets)
 - `SERVICE_ROLE` (`api` on API service, `worker` on worker-beat service)
 - Optional: `LOG_LEVEL`, `ENVIRONMENT`
 

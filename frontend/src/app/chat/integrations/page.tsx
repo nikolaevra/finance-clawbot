@@ -11,6 +11,7 @@ import {
   Mail,
   CreditCard,
   BookOpen,
+  FileSpreadsheet,
   X,
   Eye,
   EyeOff,
@@ -30,7 +31,7 @@ interface IntegrationDef {
   slug: IntegrationProvider;
   name: string;
   description: string;
-  category: "accounting" | "email" | "spend";
+  category: "accounting" | "email" | "workspace" | "spend";
   icon: React.ReactNode;
   mergeSlug?: string;
 }
@@ -60,6 +61,13 @@ const INTEGRATION_CATALOG: IntegrationDef[] = [
     icon: <Mail size={20} className="text-red-400/70" strokeWidth={1.5} />,
   },
   {
+    slug: "google_workspace",
+    name: "Google Workspace",
+    description: "Connect Drive, Docs, and Sheets for agent read/write actions.",
+    category: "workspace",
+    icon: <FileSpreadsheet size={20} className="text-emerald-400/70" strokeWidth={1.5} />,
+  },
+  {
     slug: "float",
     name: "Float",
     description: "Connect card and account transactions from Float Financial.",
@@ -71,6 +79,7 @@ const INTEGRATION_CATALOG: IntegrationDef[] = [
 const CATEGORY_LABELS: Record<string, string> = {
   accounting: "Accounting",
   email: "Email",
+  workspace: "Google Workspace",
   spend: "Spend Management",
 };
 
@@ -230,6 +239,12 @@ export default function IntegrationsPage() {
       setSuccessMsg("Gmail connected successfully!");
       loadIntegrations();
       window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+    if (params.get("google_workspace") === "connected") {
+      setSuccessMsg("Google Workspace connected successfully!");
+      loadIntegrations();
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }, [loadIntegrations]);
 
@@ -315,6 +330,21 @@ export default function IntegrationsPage() {
     }
   }, []);
 
+  const handleConnectGoogleWorkspace = useCallback(async () => {
+    setConnectingSlug("google_workspace");
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const { auth_url } = await getGmailAuthUrl("google_workspace");
+      window.location.href = auth_url;
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to start Google Workspace connection"
+      );
+      setConnectingSlug(null);
+    }
+  }, []);
+
   const handleConnectFloat = useCallback(
     async (apiKey: string) => {
       setFloatSubmitting(true);
@@ -343,12 +373,14 @@ export default function IntegrationsPage() {
         handleConnectAccounting(def);
       } else if (def.slug === "gmail") {
         handleConnectGmail();
+      } else if (def.slug === "google_workspace") {
+        handleConnectGoogleWorkspace();
       } else if (def.slug === "float") {
         setConnectingSlug("float");
         setFloatDialogOpen(true);
       }
     },
-    [handleConnectAccounting, handleConnectGmail]
+    [handleConnectAccounting, handleConnectGmail, handleConnectGoogleWorkspace]
   );
 
   const handleDisconnect = useCallback(
@@ -373,7 +405,7 @@ export default function IntegrationsPage() {
   );
 
   const connectedProviders = new Set(integrations.map((i) => i.provider));
-  const categories = ["accounting", "email", "spend"] as const;
+  const categories = ["accounting", "email", "workspace", "spend"] as const;
 
   return (
     <div className="flex h-full flex-col">

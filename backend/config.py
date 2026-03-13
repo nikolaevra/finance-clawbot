@@ -58,10 +58,14 @@ class Config:
     # Merge.dev
     MERGE_API_KEY = os.getenv('MERGE_API_KEY', '')
 
-    # Google OAuth (Gmail)
+    # Google OAuth (Gmail + Workspace)
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
     GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
     GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5001/api/integrations/gmail/callback')
+    GOOGLE_WORKSPACE_REDIRECT_URI = os.getenv(
+        'GOOGLE_WORKSPACE_REDIRECT_URI',
+        'http://localhost:5001/api/integrations/google-workspace/callback',
+    )
     GMAIL_WEBHOOK_SECRET = os.getenv('GMAIL_WEBHOOK_SECRET', '')
     GMAIL_WATCH_TOPIC = os.getenv('GMAIL_WATCH_TOPIC', '')
     ENABLE_GMAIL_WATCHER = _as_bool(os.getenv("ENABLE_GMAIL_WATCHER"), True)

@@ -79,14 +79,14 @@ function BubbleActionButtons({
 
   return (
     <div
-      className={`absolute top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 ${
-        align === "right" ? "-right-20" : "-left-20"
+      className={`absolute top-3 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 ${
+        align === "right" ? "right-3" : "left-3"
       }`}
     >
       <button
         type="button"
         onClick={handleCopy}
-        className="rounded-md bg-foreground/[0.08] p-1.5 text-foreground/45 hover:bg-foreground/[0.12] hover:text-foreground/80"
+        className="rounded-md bg-background/90 p-1.5 text-foreground/60 ring-1 ring-foreground/15 hover:bg-background hover:text-foreground"
         title={copied ? "Copied" : "Copy message"}
         aria-label={copied ? "Copied message" : "Copy message"}
       >
@@ -96,7 +96,7 @@ function BubbleActionButtons({
         <button
           type="button"
           onClick={() => onPaste?.(text)}
-          className="rounded-md bg-foreground/[0.08] p-1.5 text-foreground/45 hover:bg-foreground/[0.12] hover:text-foreground/80"
+          className="rounded-md bg-background/90 p-1.5 text-foreground/60 ring-1 ring-foreground/15 hover:bg-background hover:text-foreground"
           title="Paste into input"
           aria-label="Paste message into input"
         >
@@ -221,7 +221,7 @@ export default function MessageBubble({
     preview?: string
   ) => (
     <div className="flex justify-start px-4 py-1.5">
-      <div className="max-w-[85%] w-full">
+      <div className="w-full max-w-[min(92vw,54rem)] sm:max-w-[88%] lg:max-w-[80%]">
         <button
           type="button"
           onClick={() => setToolExpanded((prev) => !prev)}
@@ -306,7 +306,7 @@ export default function MessageBubble({
 
     return renderCollapsibleToolResult(
       "Tool Result",
-      <pre className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] px-4 py-3 text-xs text-foreground/50 overflow-x-auto whitespace-pre-wrap">
+      <pre className="overflow-hidden whitespace-pre-wrap break-words rounded-2xl bg-foreground/[0.05] ring-1 ring-foreground/[0.1] px-4 py-3 text-xs text-foreground/75">
         {content}
       </pre>,
       undefined,
@@ -321,8 +321,8 @@ export default function MessageBubble({
     ? "my-7 border-0 border-t border-white/30"
     : "my-8 border-0 border-t border-foreground/[0.22]";
   const markdownTableClassName = isUser
-    ? "w-full min-w-[30rem] border-collapse border border-white/30"
-    : "w-full min-w-[30rem] border-collapse border border-foreground/[0.18]";
+    ? "w-full table-fixed border-collapse border border-white/35"
+    : "w-full table-fixed border-collapse border border-foreground/[0.22]";
 
   const markdownComponents = {
     hr(props: HTMLAttributes<HTMLHRElement>) {
@@ -330,7 +330,7 @@ export default function MessageBubble({
     },
     table({ children }: { children?: ReactNode }) {
       return (
-        <div className="my-5 w-full overflow-x-auto">
+        <div className="my-5 w-full overflow-hidden">
           <table className={markdownTableClassName}>
             {children}
           </table>
@@ -361,6 +361,9 @@ export default function MessageBubble({
                 borderRadius: 0,
                 background: "var(--card)",
                 fontSize: "12.5px",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
               }}
             >
               {codeString}
@@ -383,11 +386,11 @@ export default function MessageBubble({
   if (isUser) {
     return (
       <div className="flex justify-end px-4 py-1.5">
-        <div className="group relative max-w-[75%]">
+        <div className="group relative w-fit max-w-[min(92vw,42rem)] sm:max-w-[78%]">
           {content ? (
             <BubbleActionButtons text={content} align="left" onPaste={onPasteBody} />
           ) : null}
-          <div className="rounded-2xl rounded-br-md bg-blue-500 px-4 py-2.5 text-white shadow-md shadow-blue-500/10">
+          <div className="rounded-2xl rounded-br-md bg-blue-600 px-4 py-2.5 text-white shadow-md shadow-blue-600/20">
             <div className="prose prose-sm max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-p:text-white prose-strong:text-white prose-headings:my-3 prose-headings:text-white prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-0.5 prose-li:text-blue-50 prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:text-blue-50 prose-a:text-blue-100 prose-a:no-underline hover:prose-a:underline prose-hr:my-7 prose-hr:border-white/30 prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-white/30 prose-th:border prose-th:border-white/35 prose-th:px-2 prose-th:py-1 prose-th:text-left prose-th:text-white prose-td:border prose-td:border-white/25 prose-td:px-2 prose-td:py-1 prose-td:text-blue-50">
               <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={markdownComponents}>
                 {content}
@@ -400,16 +403,16 @@ export default function MessageBubble({
   }
 
   return (
-    <div className="flex justify-start px-4 py-2.5">
-      <div className="w-full">
+    <div className="flex justify-start py-2.5 pl-4 pr-8 md:pr-12">
+      <div className="w-full max-w-[min(92vw,54rem)] sm:max-w-[88%] lg:max-w-[80%]">
         {(thinking || isStreaming) && (
           <ThinkingIndicator thinking={thinking} isStreaming={isStreaming && !content} />
         )}
 
         {content ? (
-          <div className="group relative rounded-2xl bg-foreground/[0.03] px-5 py-4 ring-1 ring-foreground/[0.08] shadow-sm shadow-black/5">
+          <div className="group relative rounded-2xl bg-card px-5 py-4 ring-1 ring-foreground/[0.14] shadow-sm shadow-black/10">
             <BubbleActionButtons text={content} align="right" onPaste={onPasteBody} />
-            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-p:my-[1.25rem] prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6 prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6 prose-li:my-1 prose-li:marker:text-foreground/45 prose-blockquote:my-4 prose-blockquote:border-l-2 prose-blockquote:border-foreground/20 prose-blockquote:pl-4 prose-blockquote:text-foreground/75 prose-pre:my-4 prose-pre:p-0 prose-pre:bg-transparent prose-headings:mt-6 prose-headings:mb-3 prose-headings:text-foreground/90 prose-hr:my-8 prose-hr:border-foreground/[0.22] prose-table:my-5 prose-table:w-full prose-table:border-collapse prose-table:border prose-table:border-foreground/[0.18] prose-th:border prose-th:border-foreground/[0.18] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-foreground/80 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:border prose-td:border-foreground/[0.14] prose-strong:text-foreground/95 prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline">
+            <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed text-foreground/95 prose-p:my-[1.25rem] prose-p:leading-7 prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6 prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6 prose-li:my-1 prose-li:marker:text-foreground/65 prose-blockquote:my-4 prose-blockquote:border-l-2 prose-blockquote:border-foreground/30 prose-blockquote:pl-4 prose-blockquote:text-foreground/85 prose-pre:my-4 prose-pre:overflow-hidden prose-pre:p-0 prose-pre:bg-transparent prose-headings:mt-6 prose-headings:mb-3 prose-headings:text-foreground prose-hr:my-8 prose-hr:border-foreground/[0.3] prose-table:my-5 prose-table:w-full prose-table:table-fixed prose-table:border-collapse prose-table:border prose-table:border-foreground/[0.22] prose-th:border prose-th:border-foreground/[0.22] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:text-foreground/90 prose-td:px-3 prose-td:py-2 prose-td:align-top prose-td:border prose-td:border-foreground/[0.2] prose-strong:text-foreground prose-a:text-blue-500 prose-a:no-underline hover:prose-a:underline">
               <ReactMarkdown
                 remarkPlugins={MARKDOWN_PLUGINS}
                 components={markdownComponents}

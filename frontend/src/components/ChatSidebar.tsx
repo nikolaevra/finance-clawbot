@@ -54,7 +54,7 @@ export function MobileChatSidebarToggle() {
   return (
     <button
       onClick={toggleMobileSidebar}
-      className="md:hidden fixed top-3 left-3 z-40 flex items-center justify-center w-9 h-9 rounded-xl glass bg-foreground/[0.08] text-foreground/60 shadow-lg shadow-black/20 border border-foreground/[0.08]"
+      className="md:hidden fixed top-3 left-3 z-40 flex items-center justify-center w-9 h-9 rounded-md glass bg-foreground/[0.1] text-foreground/70 shadow-lg shadow-black/25 border border-foreground/[0.14]"
       title="Open chats"
     >
       <Menu size={16} strokeWidth={1.5} />
@@ -142,7 +142,7 @@ function ConversationList({
           const isBackground =
             conv.agent_mode === "background" ||
             conv.conversation_type === "background";
-          const agentBadge = isBackground ? "Background Agent" : "Live Agent";
+          const agentBadge = isBackground ? "Background" : "Live";
           const sourceMeta = isBackground
             ? [conv.agent_name, conv.agent_source].filter(Boolean).join(" · ")
             : "";
@@ -159,42 +159,42 @@ function ConversationList({
                   handleSelect(conv.id);
                 }
               }}
-              className={`group relative flex w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left transition-all duration-200 cursor-pointer ${
+              className={`group relative flex w-full items-start gap-2 rounded-md border border-transparent px-3 py-2.5 text-left transition-all duration-150 cursor-pointer ${
                 isActive
-                  ? "bg-foreground/[0.08]"
-                  : "hover:bg-foreground/[0.04]"
+                  ? "border-foreground/20 bg-foreground/[0.14]"
+                  : "hover:bg-foreground/[0.08]"
               } ${isDeleting ? "opacity-40 pointer-events-none" : ""}`}
             >
               {isActive && (
-                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-full bg-blue-400" />
+                <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-sm bg-blue-500" />
               )}
               <div className="flex-1 min-w-0 pr-5">
                 <p
                   className={`truncate text-[13px] leading-snug ${
                     isActive
-                      ? "font-medium text-foreground/90"
-                      : "text-foreground/55"
+                      ? "font-medium text-foreground"
+                      : "text-foreground/75"
                   }`}
                 >
                   {conv.title}
                 </p>
-                <div className="mt-1 flex items-center gap-1.5">
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                   <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                    className={`inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
                       isBackground
-                        ? "bg-violet-500/15 text-violet-300"
-                        : "bg-blue-500/15 text-blue-300"
+                        ? "bg-violet-500/20 text-violet-200 ring-1 ring-violet-400/40"
+                        : "bg-blue-500/20 text-blue-200 ring-1 ring-blue-400/40"
                     }`}
                   >
                     {agentBadge}
                   </span>
                   {sourceMeta && (
-                    <span className="truncate text-[10px] text-foreground/30">
+                    <span className="min-w-0 truncate text-[10px] text-foreground/50">
                       {sourceMeta}
                     </span>
                   )}
                 </div>
-                <p className="mt-0.5 text-[11px] text-foreground/25">
+                <p className="mt-0.5 text-[11px] text-foreground/45">
                   {formatRelativeTime(conv.updated_at)}
                 </p>
               </div>
@@ -202,7 +202,7 @@ function ConversationList({
               <button
                 onClick={(e) => handleDelete(e, conv.id)}
                 disabled={isDeleting}
-                className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-6 h-6 rounded-lg opacity-0 group-hover:opacity-100 text-foreground/20 hover:text-red-400 hover:bg-red-400/10"
+                className="absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md opacity-0 group-hover:opacity-100 text-foreground/30 hover:text-red-400 hover:bg-red-400/10"
                 title="Delete chat"
               >
                 <Trash2 size={12} strokeWidth={1.5} />
@@ -226,7 +226,7 @@ export function MobileChatSidebar() {
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={toggleMobileSidebar}
       />
-      <aside className="absolute inset-y-0 left-0 flex w-[280px] flex-col glass bg-background/95 shadow-2xl shadow-black/40">
+      <aside className="absolute inset-y-0 left-0 flex w-[280px] flex-col glass bg-background/95 shadow-2xl shadow-black/40 border-r border-foreground/[0.14]">
         <div className="flex items-center justify-end px-3 pt-3">
           <button
             onClick={toggleMobileSidebar}
@@ -248,7 +248,7 @@ export default function ChatSidebar() {
   if (!isSidebarOpen) return null;
 
   return (
-    <aside className="hidden md:flex w-[260px] shrink-0 flex-col bg-foreground/[0.02] border-r border-foreground/[0.06]">
+    <aside className="hidden md:flex w-[260px] shrink-0 flex-col bg-foreground/[0.04] border-r border-foreground/[0.1]">
       <ConversationList showCollapseToggle />
     </aside>
   );

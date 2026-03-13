@@ -18,6 +18,7 @@ import json
 import base64
 import hmac
 from datetime import datetime, timezone
+from typing import Any
 from flask import Blueprint, request, g, jsonify, redirect
 from middleware.auth import require_auth
 
@@ -33,6 +34,31 @@ from services.float_service import validate_token as float_validate_token
 from services.audit_log_service import log_gmail_inbound
 
 integrations_bp = Blueprint("integrations", __name__)
+
+
+def _latest_google_workspace_integration(user_id: str) -> dict[str, Any] | None:
+    sb = get_supabase()
+    result = (
+        sb.table("integrations")
+        .select("id, user_id, account_token, status")
+        .eq("user_id", user_id)
+        .eq("provider", "google_workspace")
+        .eq("status", "active")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def _persist_integration_token(integration_id: str, account_token: str) -> None:
+    sb = get_supabase()
+    sb.table("integrations").update(
+        {
+            "account_token": account_token,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).eq("id", integration_id).execute()
 
 
 # ── List integrations ─────────────────────────────────────────
@@ -230,6 +256,430 @@ def gmail_callback():
 
     frontend_url = Config.FRONTEND_URL
     return redirect(f"{frontend_url}/chat/integrations?gmail=connected")
+
+
+# ── Google Workspace: OAuth flow + API ops ────────────────────
+
+@integrations_bp.route("/integrations/google-workspace/auth-url", methods=["POST"])
+@require_auth
+def google_workspace_auth_url():
+    from services.google_workspace_service import get_auth_url
+    try:
+        url = get_auth_url(g.user_id)
+        return jsonify({"auth_url": url})
+    except Exception as e:
+        log.exception("google_workspace_auth_url failed for user=%s", g.user_id)
+        return jsonify({"error": f"Failed to generate auth URL: {e}"}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/callback", methods=["GET"])
+def google_workspace_callback():
+    from services.google_workspace_service import (
+        exchange_code,
+        get_user_profile,
+        parse_oauth_state,
+    )
+
+    code = request.args.get("code")
+    state = request.args.get("state")
+    if not code or not state:
+        return jsonify({"error": "Missing code or state"}), 400
+
+    try:
+        user_id, code_verifier = parse_oauth_state(state)
+    except Exception as e:
+        log.warning("google_workspace_callback_invalid_state state=%s err=%s", state, e)
+        return jsonify({"error": "Invalid OAuth state"}), 400
+
+    try:
+        credentials_json = exchange_code(code, code_verifier=code_verifier)
+        profile, refreshed_token = get_user_profile(credentials_json)
+        token_to_store = refreshed_token or credentials_json
+    except Exception as e:
+        log.exception("google_workspace exchange_code failed user=%s", user_id)
+        return jsonify({"error": f"OAuth exchange failed: {e}"}), 502
+
+    email = (profile.get("email") or "").strip()
+    integration_name = f"Google Workspace ({email})" if email else "Google Workspace"
+    sb = get_supabase()
+    sb.table("integrations").insert({
+        "user_id": user_id,
+        "provider": "google_workspace",
+        "integration_name": integration_name,
+        "account_token": token_to_store,
+        "status": "active",
+    }).execute()
+
+    frontend_url = Config.FRONTEND_URL
+    return redirect(f"{frontend_url}/chat/integrations?google_workspace=connected")
+
+
+def _require_workspace_credentials() -> tuple[dict[str, Any] | None, Any | None]:
+    integration = _latest_google_workspace_integration(g.user_id)
+    if not integration:
+        return None, (jsonify({"error": "No active Google Workspace integration found"}), 404)
+    return integration, None
+
+
+@integrations_bp.route("/integrations/google-workspace/drive/list", methods=["POST"])
+@require_auth
+def google_workspace_drive_list():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    query = str(body.get("query", "")).strip()
+    page_size = int(body.get("page_size", 20) or 20)
+    try:
+        payload, refreshed = google_workspace_service.drive_list_files(
+            integration["account_token"],
+            query=query,
+            page_size=page_size,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_drive_list failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/drive/file", methods=["POST"])
+@require_auth
+def google_workspace_drive_get_file_metadata():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    file_id = (body.get("file_id") or "").strip()
+    if not file_id:
+        return jsonify({"error": "file_id is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.drive_get_file_metadata(
+            integration["account_token"],
+            file_id=file_id,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_drive_get_file_metadata failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/drive/file/content", methods=["POST"])
+@require_auth
+def google_workspace_drive_get_file_content():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    file_id = (body.get("file_id") or "").strip()
+    if not file_id:
+        return jsonify({"error": "file_id is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.drive_get_text_content(
+            integration["account_token"],
+            file_id=file_id,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_drive_get_file_content failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/drive/file/create-text", methods=["POST"])
+@require_auth
+def google_workspace_drive_create_text_file():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    content = str(body.get("content") or "")
+    mime_type = (body.get("mime_type") or "text/plain").strip()
+    parent_folder_id = (body.get("parent_folder_id") or "").strip() or None
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.drive_create_text_file(
+            integration["account_token"],
+            name=name,
+            content=content,
+            mime_type=mime_type,
+            parent_folder_id=parent_folder_id,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload), 201
+    except Exception as e:
+        log.exception("google_workspace_drive_create_text_file failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/drive/file/update-text", methods=["POST"])
+@require_auth
+def google_workspace_drive_update_text_file():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    file_id = (body.get("file_id") or "").strip()
+    content = str(body.get("content") or "")
+    mime_type = (body.get("mime_type") or "text/plain").strip()
+    if not file_id:
+        return jsonify({"error": "file_id is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.drive_update_text_file(
+            integration["account_token"],
+            file_id=file_id,
+            content=content,
+            mime_type=mime_type,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_drive_update_text_file failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/docs/create", methods=["POST"])
+@require_auth
+def google_workspace_docs_create():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    title = (body.get("title") or "").strip()
+    content = str(body.get("content") or "")
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.docs_create_document(
+            integration["account_token"],
+            title=title,
+            content=content,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload), 201
+    except Exception as e:
+        log.exception("google_workspace_docs_create failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/docs/get", methods=["POST"])
+@require_auth
+def google_workspace_docs_get():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    document_id = (body.get("document_id") or "").strip()
+    if not document_id:
+        return jsonify({"error": "document_id is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.docs_get_document(
+            integration["account_token"],
+            document_id=document_id,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_docs_get failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/docs/append-text", methods=["POST"])
+@require_auth
+def google_workspace_docs_append_text():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    document_id = (body.get("document_id") or "").strip()
+    text = str(body.get("text") or "")
+    if not document_id:
+        return jsonify({"error": "document_id is required"}), 400
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.docs_append_text(
+            integration["account_token"],
+            document_id=document_id,
+            text=text,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_docs_append_text failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/docs/replace-text", methods=["POST"])
+@require_auth
+def google_workspace_docs_replace_text():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    document_id = (body.get("document_id") or "").strip()
+    replacements = body.get("replacements") or []
+    if not document_id:
+        return jsonify({"error": "document_id is required"}), 400
+    if not isinstance(replacements, list):
+        return jsonify({"error": "replacements must be an array"}), 400
+    try:
+        payload, refreshed = google_workspace_service.docs_replace_all_text(
+            integration["account_token"],
+            document_id=document_id,
+            replacements=replacements,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_docs_replace_text failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/sheets/create", methods=["POST"])
+@require_auth
+def google_workspace_sheets_create():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    title = (body.get("title") or "").strip()
+    sheet_title = (body.get("sheet_title") or "Sheet1").strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.sheets_create_spreadsheet(
+            integration["account_token"],
+            title=title,
+            sheet_title=sheet_title,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload), 201
+    except Exception as e:
+        log.exception("google_workspace_sheets_create failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/sheets/read", methods=["POST"])
+@require_auth
+def google_workspace_sheets_read():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    spreadsheet_id = (body.get("spreadsheet_id") or "").strip()
+    range_a1 = (body.get("range") or "").strip()
+    if not spreadsheet_id or not range_a1:
+        return jsonify({"error": "spreadsheet_id and range are required"}), 400
+    try:
+        payload, refreshed = google_workspace_service.sheets_read_values(
+            integration["account_token"],
+            spreadsheet_id=spreadsheet_id,
+            range_a1=range_a1,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_sheets_read failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/sheets/update", methods=["POST"])
+@require_auth
+def google_workspace_sheets_update():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    spreadsheet_id = (body.get("spreadsheet_id") or "").strip()
+    range_a1 = (body.get("range") or "").strip()
+    values = body.get("values")
+    if not spreadsheet_id or not range_a1:
+        return jsonify({"error": "spreadsheet_id and range are required"}), 400
+    if not isinstance(values, list):
+        return jsonify({"error": "values must be a 2D array"}), 400
+    try:
+        payload, refreshed = google_workspace_service.sheets_update_values(
+            integration["account_token"],
+            spreadsheet_id=spreadsheet_id,
+            range_a1=range_a1,
+            values=values,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_sheets_update failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@integrations_bp.route("/integrations/google-workspace/sheets/append", methods=["POST"])
+@require_auth
+def google_workspace_sheets_append():
+    from services import google_workspace_service
+
+    integration, err = _require_workspace_credentials()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    spreadsheet_id = (body.get("spreadsheet_id") or "").strip()
+    range_a1 = (body.get("range") or "").strip()
+    values = body.get("values")
+    if not spreadsheet_id or not range_a1:
+        return jsonify({"error": "spreadsheet_id and range are required"}), 400
+    if not isinstance(values, list):
+        return jsonify({"error": "values must be a 2D array"}), 400
+    try:
+        payload, refreshed = google_workspace_service.sheets_append_values(
+            integration["account_token"],
+            spreadsheet_id=spreadsheet_id,
+            range_a1=range_a1,
+            values=values,
+        )
+        if refreshed:
+            _persist_integration_token(integration["id"], refreshed)
+        return jsonify(payload)
+    except Exception as e:
+        log.exception("google_workspace_sheets_append failed user=%s", g.user_id)
+        return jsonify({"error": str(e)}), 500
 
 
 @integrations_bp.route("/integrations/gmail/webhook", methods=["POST"])

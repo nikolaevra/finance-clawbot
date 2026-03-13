@@ -159,8 +159,8 @@ export default function MessageList({
   let lastDay = "";
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-5xl py-4">
+    <div ref={containerRef} className="flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="mx-auto w-full max-w-4xl py-4">
         {messages.map((msg) => {
           if (
             msg.role === "assistant" &&

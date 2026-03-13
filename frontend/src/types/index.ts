@@ -105,7 +105,12 @@ export interface UserDocument {
 
 // ── Integration types ───────────────────────────────────────────────
 
-export type IntegrationProvider = "quickbooks" | "netsuite" | "gmail" | "float";
+export type IntegrationProvider =
+  | "quickbooks"
+  | "netsuite"
+  | "gmail"
+  | "google_workspace"
+  | "float";
 
 export interface Integration {
   id: string;
