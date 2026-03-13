@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
@@ -38,6 +38,7 @@ import {
 } from "@/lib/api";
 
 type ComposerMode = "new" | "reply" | "forward";
+const THREAD_PAGE_SIZE = 75;
 
 const TABS: Array<{ id: InboxTab; label: string }> = [
   { id: "inbox", label: "Inbox" },
@@ -140,6 +141,15 @@ function getSenderLabel(thread: EmailThread): string {
   );
 }
 
+function mergeUniqueThreads(existing: EmailThread[], incoming: EmailThread[]): EmailThread[] {
+  if (incoming.length === 0) return existing;
+  const map = new Map(existing.map((thread) => [thread.gmail_thread_id, thread]));
+  for (const thread of incoming) {
+    map.set(thread.gmail_thread_id, thread);
+  }
+  return Array.from(map.values());
+}
+
 export default function InboxPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -148,6 +158,9 @@ export default function InboxPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [threads, setThreads] = useState<EmailThread[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(true);
+  const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasMoreThreads, setHasMoreThreads] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -172,6 +185,9 @@ export default function InboxPage() {
   const [composeCc, setComposeCc] = useState("");
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
   const routeEmailId = searchParams.get("emailId");
+  const loadContextRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  const listEndRef = useRef<HTMLDivElement | null>(null);
 
   const selectedThread = useMemo(
     () => threads.find((t) => t.gmail_thread_id === activeThreadId) || null,
@@ -228,18 +244,51 @@ export default function InboxPage() {
     });
   }, [searchQuery, threads]);
 
-  const loadThreads = useCallback(async () => {
+  const resetAndLoadFirstPage = useCallback(async () => {
+    const nextContext = loadContextRef.current + 1;
+    loadContextRef.current = nextContext;
+    loadingMoreRef.current = false;
     setLoadingThreads(true);
+    setLoadingMoreThreads(false);
     setError(null);
     try {
-      const data = await fetchInboxThreads(activeTab, 1, 75);
+      const data = await fetchInboxThreads(activeTab, 1, THREAD_PAGE_SIZE);
+      if (loadContextRef.current !== nextContext) return;
       setThreads(data.threads || []);
+      setCurrentPage(data.page || 1);
+      setHasMoreThreads(Boolean(data.has_more));
     } catch (err) {
+      if (loadContextRef.current !== nextContext) return;
       setError(err instanceof Error ? err.message : "Failed to load inbox");
     } finally {
+      if (loadContextRef.current !== nextContext) return;
       setLoadingThreads(false);
     }
   }, [activeTab]);
+
+  const loadMoreThreads = useCallback(async () => {
+    if (loadingThreads || loadingMoreRef.current || !hasMoreThreads) return;
+
+    loadingMoreRef.current = true;
+    setLoadingMoreThreads(true);
+    const context = loadContextRef.current;
+    const nextPage = currentPage + 1;
+
+    try {
+      const data = await fetchInboxThreads(activeTab, nextPage, THREAD_PAGE_SIZE);
+      if (loadContextRef.current !== context) return;
+      setThreads((prev) => mergeUniqueThreads(prev, data.threads || []));
+      setCurrentPage(data.page || nextPage);
+      setHasMoreThreads(Boolean(data.has_more));
+    } catch (err) {
+      if (loadContextRef.current !== context) return;
+      setError(err instanceof Error ? err.message : "Failed to load more inbox threads");
+    } finally {
+      loadingMoreRef.current = false;
+      if (loadContextRef.current !== context) return;
+      setLoadingMoreThreads(false);
+    }
+  }, [activeTab, currentPage, hasMoreThreads, loadingThreads]);
 
   const loadThread = useCallback(async (threadId: string) => {
     setLoadingThreadDetail(true);
@@ -276,8 +325,32 @@ export default function InboxPage() {
   }, []);
 
   useEffect(() => {
-    loadThreads();
-  }, [loadThreads, refreshTick]);
+    resetAndLoadFirstPage();
+  }, [resetAndLoadFirstPage, refreshTick]);
+
+  useEffect(() => {
+    if (loadingThreads || !hasMoreThreads) return;
+    const sentinel = listEndRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            void loadMoreThreads();
+            break;
+          }
+        }
+      },
+      {
+        root: null,
+        rootMargin: "240px 0px",
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [filteredThreads.length, hasMoreThreads, loadMoreThreads, loadingThreads]);
 
   useEffect(() => {
     if (!routeEmailId) return;
@@ -593,7 +666,11 @@ export default function InboxPage() {
             </div>
           ) : filteredThreads.length === 0 ? (
             <div className="px-4 py-12 text-sm text-foreground/50">
-              {threads.length === 0 ? "No threads yet." : "No emails matched your search."}
+              {threads.length === 0
+                ? "No threads yet."
+                : searchQuery.trim() && hasMoreThreads
+                ? "No loaded emails matched your search yet. Keep scrolling to load more."
+                : "No emails matched your search."}
             </div>
           ) : (
             <div className="divide-y divide-foreground/[0.06]">
@@ -663,6 +740,23 @@ export default function InboxPage() {
                   </div>
                 </article>
               ))}
+            </div>
+          )}
+          {!loadingThreads && threads.length > 0 && (
+            <div
+              ref={listEndRef}
+              className="flex min-h-12 items-center justify-center border-t border-foreground/[0.06] px-3 py-3 text-xs text-foreground/50"
+            >
+              {loadingMoreThreads ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 size={13} className="animate-spin" />
+                  Loading more threads...
+                </span>
+              ) : hasMoreThreads ? (
+                "Scroll to load more"
+              ) : (
+                "No more threads"
+              )}
             </div>
           )}
         </div>

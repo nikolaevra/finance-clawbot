@@ -71,37 +71,86 @@ def _thread_ids_by_inbox_scope(
     user_id: str,
     integration_id: str,
     scope: str,
-    max_scan: int = 5000,
+    batch_size: int = 1000,
 ) -> list[str]:
-    rows = (
-        sb.table("emails")
-        .select("gmail_thread_id, label_ids_json, internal_date_ts")
-        .eq("user_id", user_id)
-        .eq("integration_id", integration_id)
-        .is_("deleted_at", "null")
-        .order("internal_date_ts", desc=True)
-        .range(0, max_scan - 1)
-        .execute()
-    ).data or []
-
     ordered_thread_ids: list[str] = []
     seen_thread_ids: set[str] = set()
     inbox_thread_ids: set[str] = set()
-    for row in rows:
-        thread_id = row.get("gmail_thread_id")
-        if not thread_id:
-            continue
-        labels = row.get("label_ids_json") or []
-        if "INBOX" in labels:
-            inbox_thread_ids.add(thread_id)
-        if thread_id not in seen_thread_ids:
-            seen_thread_ids.add(thread_id)
-            ordered_thread_ids.append(thread_id)
+    offset = 0
+    while True:
+        rows = (
+            sb.table("emails")
+            .select("gmail_thread_id, label_ids_json, internal_date_ts")
+            .eq("user_id", user_id)
+            .eq("integration_id", integration_id)
+            .is_("deleted_at", "null")
+            .order("internal_date_ts", desc=True)
+            .range(offset, offset + batch_size - 1)
+            .execute()
+        ).data or []
+        if not rows:
+            break
+
+        for row in rows:
+            thread_id = row.get("gmail_thread_id")
+            if not thread_id:
+                continue
+            labels = row.get("label_ids_json") or []
+            if "INBOX" in labels:
+                inbox_thread_ids.add(thread_id)
+            if thread_id not in seen_thread_ids:
+                seen_thread_ids.add(thread_id)
+                ordered_thread_ids.append(thread_id)
+
+        if len(rows) < batch_size:
+            break
+        offset += batch_size
 
     if scope == "inbox":
         return [thread_id for thread_id in ordered_thread_ids if thread_id in inbox_thread_ids]
     if scope == "skip_inbox":
         return [thread_id for thread_id in ordered_thread_ids if thread_id not in inbox_thread_ids]
+    return ordered_thread_ids
+
+
+def _thread_ids_by_flag(
+    sb,
+    *,
+    user_id: str,
+    integration_id: str,
+    flag_col: str,
+    batch_size: int = 1000,
+) -> list[str]:
+    ordered_thread_ids: list[str] = []
+    seen_thread_ids: set[str] = set()
+    offset = 0
+
+    while True:
+        rows = (
+            sb.table("emails")
+            .select("gmail_thread_id")
+            .eq("user_id", user_id)
+            .eq("integration_id", integration_id)
+            .eq(flag_col, True)
+            .is_("deleted_at", "null")
+            .order("internal_date_ts", desc=True)
+            .range(offset, offset + batch_size - 1)
+            .execute()
+        ).data or []
+        if not rows:
+            break
+
+        for row in rows:
+            thread_id = row.get("gmail_thread_id")
+            if not thread_id or thread_id in seen_thread_ids:
+                continue
+            seen_thread_ids.add(thread_id)
+            ordered_thread_ids.append(thread_id)
+
+        if len(rows) < batch_size:
+            break
+        offset += batch_size
+
     return ordered_thread_ids
 
 
@@ -238,18 +287,12 @@ def list_threads():
 
     if tab in ("sent", "drafts"):
         flag_col = "is_sent" if tab == "sent" else "is_draft"
-        rows = (
-            sb.table("emails")
-            .select("gmail_thread_id")
-            .eq("user_id", g.user_id)
-            .eq("integration_id", integration["id"])
-            .eq(flag_col, True)
-            .is_("deleted_at", "null")
-            .order("internal_date_ts", desc=True)
-            .limit(500)
-            .execute()
-        ).data or []
-        thread_ids = list({r.get("gmail_thread_id") for r in rows if r.get("gmail_thread_id")})
+        thread_ids = _thread_ids_by_flag(
+            sb,
+            user_id=g.user_id,
+            integration_id=integration["id"],
+            flag_col=flag_col,
+        )
         if not thread_ids:
             return jsonify({"threads": [], "page": page, "limit": limit, "has_more": False})
         query = query.in_("gmail_thread_id", thread_ids)
