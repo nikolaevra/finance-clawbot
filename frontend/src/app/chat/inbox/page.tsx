@@ -630,13 +630,13 @@ function InboxPageContent() {
       if (activeThreadId === threadId) {
         closePreview();
       }
+      setThreads((prev) => prev.filter((thread) => thread.gmail_thread_id !== threadId));
       setSelectedThreadIds((current) => {
         if (!current.has(threadId)) return current;
         const next = new Set(current);
         next.delete(threadId);
         return next;
       });
-      setRefreshTick((n) => n + 1);
     } catch (err) {
       setError(
         err instanceof Error
