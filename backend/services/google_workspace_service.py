@@ -77,7 +77,10 @@ def get_user_profile(credentials_json: str) -> tuple[dict[str, Any], str | None]
 
 def _build_credentials(credentials_json: str) -> tuple[Credentials, str | None]:
     info = json.loads(credentials_json)
-    creds = Credentials.from_authorized_user_info(info, scopes=SCOPES)
+    # Do not force scopes here. Google can return a superset of scopes when
+    # include_granted_scopes=true is used, and overriding scopes on refresh can
+    # trigger "Scope has changed" errors.
+    creds = Credentials.from_authorized_user_info(info)
     original_token = creds.token
     updated_json: str | None = None
     if creds.expired and creds.refresh_token:
