@@ -535,6 +535,25 @@ export async function sendInboxDraft(
   return res.json();
 }
 
+export async function updateInboxDraft(
+  messageId: string,
+  body: string
+): Promise<{ id: string; message_id: string; threadId: string; labelIds: string[] }> {
+  const headers = await getAuthHeaders();
+  const endpoint = `/api/inbox/drafts/${encodeURIComponent(messageId)}`;
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    await logApiFailure(endpoint, "PATCH", res);
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || "Failed to update draft");
+  }
+  return res.json();
+}
+
 export async function markInboxMessageRead(
   messageId: string
 ): Promise<{ status: string }> {

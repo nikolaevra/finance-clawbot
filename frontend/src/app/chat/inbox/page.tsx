@@ -6,6 +6,7 @@ import {
   Archive,
   ArrowUp,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Check,
   Download,
@@ -37,6 +38,7 @@ import {
   saveInboxAttachmentToDocuments,
   sendInboxDraft,
   sendInboxEmail,
+  updateInboxDraft,
 } from "@/lib/api";
 import { useSkills } from "@/lib/hooks/useSkills";
 import { Button } from "@/components/ui/button";
@@ -223,8 +225,11 @@ function InboxPageContent() {
 
   const [sending, setSending] = useState(false);
   const [sendingDraft, setSendingDraft] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [archivingThreadId, setArchivingThreadId] = useState<string | null>(null);
   const [attachmentActions, setAttachmentActions] = useState<Record<string, "downloading" | "saving" | "saved">>({});
+  const [editableDraftBody, setEditableDraftBody] = useState("");
+  const [editableDraftMessageId, setEditableDraftMessageId] = useState<string | null>(null);
 
   const [composerMode, setComposerMode] = useState<ComposerMode | null>(null);
   const [pendingComposerMode, setPendingComposerMode] = useState<ComposerMode | null>(null);
@@ -303,6 +308,20 @@ function InboxPageContent() {
       );
     });
   }, [searchQuery, threads]);
+  const activeThreadIndex = useMemo(
+    () =>
+      activeThreadId
+        ? filteredThreads.findIndex((thread) => thread.gmail_thread_id === activeThreadId)
+        : -1,
+    [activeThreadId, filteredThreads]
+  );
+  const previousThreadId = activeThreadIndex > 0
+    ? filteredThreads[activeThreadIndex - 1]?.gmail_thread_id || null
+    : null;
+  const nextThreadId =
+    activeThreadIndex >= 0 && activeThreadIndex < filteredThreads.length - 1
+      ? filteredThreads[activeThreadIndex + 1]?.gmail_thread_id || null
+      : null;
 
   const selectedThreads = useMemo(
     () => threads.filter((thread) => selectedThreadIds.has(thread.gmail_thread_id)),
@@ -496,6 +515,18 @@ function InboxPageContent() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isPreviewOpen]);
 
+  useEffect(() => {
+    if (!selectedDraftMessage) {
+      setEditableDraftBody("");
+      setEditableDraftMessageId(null);
+      return;
+    }
+    const nextDraftId = selectedDraftMessage.gmail_message_id;
+    if (editableDraftMessageId === nextDraftId) return;
+    setEditableDraftMessageId(nextDraftId);
+    setEditableDraftBody(selectedDraftMessage.body_text || "");
+  }, [editableDraftMessageId, selectedDraftMessage]);
+
   const openComposer = (mode: ComposerMode) => {
     setComposerMode(mode);
     setComposeCc("");
@@ -547,6 +578,15 @@ function InboxPageContent() {
     if (mode) {
       setPendingComposerMode(mode);
     }
+  };
+  const openPreviousThread = () => {
+    if (!previousThreadId) return;
+    openThreadPreview(previousThreadId);
+  };
+
+  const openNextThread = () => {
+    if (!nextThreadId) return;
+    openThreadPreview(nextThreadId);
   };
 
   const openNewMessageModal = () => {
@@ -684,10 +724,17 @@ function InboxPageContent() {
 
   const sendSelectedDraft = async () => {
     if (!selectedDraftMessage || sendingDraft) return;
+    const draftMessageId = selectedDraftMessage.gmail_message_id;
     setSendingDraft(true);
     setError(null);
     try {
-      await sendInboxDraft(selectedDraftMessage.gmail_message_id);
+      const initialDraftBody = selectedDraftMessage.body_text || "";
+      const draftWasEdited =
+        editableDraftMessageId === draftMessageId && editableDraftBody !== initialDraftBody;
+      if (draftWasEdited) {
+        await updateInboxDraft(draftMessageId, editableDraftBody);
+      }
+      await sendInboxDraft(draftMessageId);
       if (activeThreadId) {
         await loadThread(activeThreadId);
       }
@@ -696,6 +743,29 @@ function InboxPageContent() {
       setError(err instanceof Error ? err.message : "Failed to send draft");
     } finally {
       setSendingDraft(false);
+    }
+  };
+
+  const saveDraftEdits = async () => {
+    if (!selectedDraftMessage || savingDraft || sendingDraft) return;
+    const draftMessageId = selectedDraftMessage.gmail_message_id;
+    const initialDraftBody = selectedDraftMessage.body_text || "";
+    const draftWasEdited =
+      editableDraftMessageId === draftMessageId && editableDraftBody !== initialDraftBody;
+    if (!draftWasEdited) return;
+
+    setSavingDraft(true);
+    setError(null);
+    try {
+      await updateInboxDraft(draftMessageId, editableDraftBody);
+      if (activeThreadId) {
+        await loadThread(activeThreadId);
+      }
+      setRefreshTick((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save draft edits");
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -1090,10 +1160,10 @@ function InboxPageContent() {
                           {(hasDraftMessages || activeTab === "drafts") && (
                             <button
                               onClick={sendSelectedDraft}
-                              disabled={!selectedDraftMessage || sendingDraft}
+                              disabled={!selectedDraftMessage || sendingDraft || savingDraft}
                               className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
                             >
-                              {sendingDraft ? (
+                              {sendingDraft || savingDraft ? (
                                 <Loader2 size={12} className="animate-spin" />
                               ) : (
                                 <Send size={12} />
@@ -1132,17 +1202,14 @@ function InboxPageContent() {
                     <div className="my-2 px-2 md:my-3 md:px-3">
                       <div className="w-full rounded-xl border border-blue-500/60 bg-card px-4 py-3 md:px-5 md:py-4">
                         <div>
-                          <div className="mb-2 flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                          <div className="flex items-start gap-2 text-blue-700 dark:text-blue-300">
                             <Sparkles size={15} />
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em]">
-                              AI-Generated Thread Summary
+                            <p className="text-sm leading-6 text-foreground">
+                              {selectedThread.ai_summary_preview ||
+                                selectedThread.snippet ||
+                                "No summary available."}
                             </p>
                           </div>
-                          <p className="text-sm leading-6 text-foreground">
-                            {selectedThread.ai_summary_preview ||
-                              selectedThread.snippet ||
-                              "No summary available."}
-                          </p>
                         </div>
                       </div>
                     </div>
@@ -1193,6 +1260,12 @@ function InboxPageContent() {
                                 <p className="truncate text-xs font-mono text-foreground/65">
                                   {message.from_json.email}
                                 </p>
+                              )}
+                              {(message.is_draft ||
+                                (message.label_ids_json || []).includes("DRAFT")) && (
+                                <span className="mt-1 inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300 ring-1 ring-amber-400/35">
+                                  Draft message
+                                </span>
                               )}
                             </div>
                           </div>
@@ -1315,6 +1388,50 @@ function InboxPageContent() {
                   </div>
                 )}
 
+                {selectedDraftMessage && (
+                  <article className="mt-4 rounded-2xl border border-amber-400/35 bg-amber-500/[0.07] p-4">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-300 ring-1 ring-amber-400/35">
+                        Draft
+                      </span>
+                      <p className="text-xs text-foreground/70">
+                        This message is still a draft. Edit it before sending.
+                      </p>
+                    </div>
+                    <textarea
+                      value={editableDraftBody}
+                      onChange={(event) => setEditableDraftBody(event.target.value)}
+                      rows={8}
+                      placeholder="Edit draft message..."
+                      className="w-full rounded-xl bg-background/80 px-3 py-2 text-sm outline-none ring-1 ring-amber-400/25 focus:ring-amber-300/40"
+                    />
+                    <div className="mt-3 flex justify-end gap-2">
+                      <button
+                        onClick={saveDraftEdits}
+                        disabled={
+                          savingDraft ||
+                          sendingDraft ||
+                          !selectedDraftMessage ||
+                          editableDraftMessageId !== selectedDraftMessage.gmail_message_id ||
+                          editableDraftBody === (selectedDraftMessage.body_text || "")
+                        }
+                        className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm ring-1 ring-foreground/[0.12] hover:bg-foreground/[0.05] disabled:opacity-50"
+                      >
+                        {savingDraft ? <Loader2 size={14} className="animate-spin" /> : null}
+                        Save Draft
+                      </button>
+                      <button
+                        onClick={sendSelectedDraft}
+                        disabled={!editableDraftBody.trim() || sendingDraft || savingDraft}
+                        className="inline-flex items-center gap-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-400 disabled:opacity-50"
+                      >
+                        {sendingDraft ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        Send Draft
+                      </button>
+                    </div>
+                  </article>
+                )}
+
                 {composerMode && (
                   <article className="mt-4 rounded-2xl border border-blue-400/30 bg-card p-4">
                     <h2 className="mb-3 text-sm font-semibold text-foreground">
@@ -1395,6 +1512,22 @@ function InboxPageContent() {
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs text-foreground/55">Quick actions</p>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={openPreviousThread}
+                      disabled={!selectedThread || !previousThreadId}
+                      className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
+                    >
+                      <ChevronLeft size={12} />
+                      Previous
+                    </button>
+                    <button
+                      onClick={openNextThread}
+                      disabled={!selectedThread || !nextThreadId}
+                      className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs ring-1 ring-foreground/[0.12] disabled:opacity-40"
+                    >
+                      Next
+                      <ChevronRight size={12} />
+                    </button>
                     <button
                       onClick={() => openComposer("reply")}
                       disabled={!selectedThread || !latestMessage}

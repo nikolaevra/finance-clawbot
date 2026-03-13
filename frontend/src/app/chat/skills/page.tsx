@@ -8,8 +8,6 @@ import {
   Loader2,
   RefreshCw,
   Play,
-  ToggleLeft,
-  ToggleRight,
   Trash2,
   Pencil,
 } from "lucide-react";
@@ -21,6 +19,14 @@ import {
   toggleSkill as apiToggleSkill,
 } from "@/lib/api";
 import type { Skill } from "@/types";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 const DEFAULT_SKILL_TEMPLATE = `---
 name: my-new-skill
@@ -63,10 +69,10 @@ export default function SkillsPage() {
             .map((d) => WEEK_DAY_LABELS[d])
         : [];
       const dayPart = days.length > 0 ? days.join(", ") : "no weekdays selected";
-      return `Schedule: Weekly on ${dayPart} at ${timePart} (${timezonePart})`;
+      return `Weekly schedule on ${dayPart} at ${timePart} (${timezonePart})`;
     }
 
-    return `Schedule: Daily at ${timePart} (${timezonePart})`;
+    return `Daily schedule at ${timePart} (${timezonePart})`;
   };
 
   const formatTriggerSummary = (skill: Skill): string | null => {
@@ -93,8 +99,72 @@ export default function SkillsPage() {
     }
 
     return filterParts.length > 0
-      ? `Trigger: ${providerPart} ${eventPart} (${filterParts.join(", ")})`
-      : `Trigger: ${providerPart} ${eventPart}`;
+      ? `${providerPart} ${eventPart} trigger (${filterParts.join(", ")})`
+      : `${providerPart} ${eventPart} trigger`;
+  };
+
+  const formatUpdatedDate = (value: string): string => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Unknown";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  const formatLatestRun = (skill: Skill): string => {
+    const scheduleKey = (skill.last_scheduled_run_key || "").trim();
+    const triggerKey = (skill.last_trigger_event_key || "").trim();
+
+    let scheduleDate: Date | null = null;
+    const scheduleMatch = scheduleKey.match(
+      /^(\d{4})-(\d{2})-(\d{2}):([0-2]\d):([0-5]\d):(daily|weekly)$/
+    );
+    if (scheduleMatch) {
+      const [, year, month, day, hour, minute] = scheduleMatch;
+      const parsed = new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute)
+      );
+      if (!Number.isNaN(parsed.getTime())) {
+        scheduleDate = parsed;
+      }
+    }
+
+    let triggerDate: Date | null = null;
+    if (triggerKey) {
+      const parsed = new Date(triggerKey);
+      if (!Number.isNaN(parsed.getTime())) {
+        triggerDate = parsed;
+      }
+    }
+
+    const latest =
+      scheduleDate && triggerDate
+        ? scheduleDate > triggerDate
+          ? scheduleDate
+          : triggerDate
+        : scheduleDate || triggerDate;
+    if (latest) {
+      return latest.toLocaleString();
+    }
+    if (scheduleKey || triggerKey) {
+      return "Recorded";
+    }
+    return "Never";
+  };
+
+  const formatAutomationDetail = (skill: Skill): string => {
+    const scheduleSummary = formatScheduleSummary(skill);
+    const triggerSummary = formatTriggerSummary(skill);
+    if (triggerSummary && scheduleSummary) {
+      return `${triggerSummary} • ${scheduleSummary}`;
+    }
+    return triggerSummary || scheduleSummary || "Manual only";
   };
 
   const handleCreate = async () => {
@@ -261,122 +331,97 @@ export default function SkillsPage() {
             </p>
           </div>
         ) : (
-          skills.map((skill) => {
-            const triggerSummary = formatTriggerSummary(skill);
-            const scheduleSummary = formatScheduleSummary(skill);
-            return (
-              <div
-                key={skill.id}
-                className="rounded-2xl bg-foreground/[0.04] ring-1 ring-foreground/[0.06] p-5 transition-all hover:bg-foreground/[0.06]"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-medium text-foreground/75 font-mono">
-                      {skill.name}
-                    </h3>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        skill.enabled
-                          ? "bg-emerald-400/10 text-emerald-400/80"
-                          : "bg-foreground/[0.06] text-foreground/30"
-                      }`}
-                    >
-                      {skill.enabled ? "Active" : "Disabled"}
-                    </span>
-                    {skill.schedule_enabled && (
-                      <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-blue-400/10 text-blue-400/80">
-                        Scheduled
-                      </span>
-                    )}
-                    {skill.trigger_enabled && (
-                      <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-400/10 text-violet-400/80">
-                        Triggered
-                      </span>
-                    )}
-                  </div>
-                  {skill.description && (
-                    <p className="text-xs text-foreground/35 mt-1.5">
-                      {skill.description}
-                    </p>
-                  )}
-                  {triggerSummary && (
-                    <p className="text-[11px] text-foreground/30 mt-1.5">
-                      {triggerSummary}
-                    </p>
-                  )}
-                  {scheduleSummary && (
-                    <p className="text-[11px] text-foreground/30 mt-1">
-                      {scheduleSummary}
-                    </p>
-                  )}
-                  <p className="text-[11px] text-foreground/20 mt-2">
-                    Updated{" "}
-                    {new Date(skill.updated_at).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => handleTryAutomation(skill.name)}
-                    disabled={testingName === skill.name}
-                    className="p-2 rounded-lg text-foreground/25 hover:text-blue-400/90 hover:bg-blue-400/10 disabled:opacity-50"
-                    title="Try Automation"
-                  >
-                    {testingName === skill.name ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Play size={14} strokeWidth={1.5} />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleToggle(skill.name, skill.enabled)}
-                    disabled={togglingId === skill.name}
-                    className="p-2 rounded-lg text-foreground/25 hover:text-foreground/50 hover:bg-foreground/[0.06] disabled:opacity-50"
-                    title={skill.enabled ? "Disable" : "Enable"}
-                  >
-                    {togglingId === skill.name ? (
-                      <Loader2 size={15} className="animate-spin" />
-                    ) : skill.enabled ? (
-                      <ToggleRight
-                        size={15}
-                        className="text-emerald-400/80"
-                      />
-                    ) : (
-                      <ToggleLeft size={15} />
-                    )}
-                  </button>
-                  <button
-                    onClick={() =>
-                      router.push(
-                        `/chat/skills/${encodeURIComponent(skill.name)}`
-                      )
-                    }
-                    className="p-2 rounded-lg text-foreground/25 hover:text-foreground/50 hover:bg-foreground/[0.06]"
-                    title="Edit"
-                  >
-                    <Pencil size={14} strokeWidth={1.5} />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(skill.name)}
-                    disabled={deletingName === skill.name}
-                    className="p-2 rounded-lg text-foreground/25 hover:text-red-400 hover:bg-red-400/10 disabled:opacity-50"
-                    title="Delete"
-                  >
-                    {deletingName === skill.name ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Trash2 size={14} strokeWidth={1.5} />
-                    )}
-                  </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          <div className="overflow-hidden rounded-2xl border border-foreground/[0.08] bg-card/70">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-foreground/[0.08]">
+                  <TableHead className="px-4 text-xs text-foreground/45">Automation</TableHead>
+                  <TableHead className="text-xs text-foreground/45">Enabled</TableHead>
+                  <TableHead className="text-xs text-foreground/45">Latest run</TableHead>
+                  <TableHead className="text-xs text-foreground/45">Updated</TableHead>
+                  <TableHead className="text-right text-xs text-foreground/45">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {skills.map((skill) => (
+                  <TableRow key={skill.id} className="border-foreground/[0.06]">
+                    <TableCell className="px-4 py-3 align-top">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{skill.name}</p>
+                        <p className="mt-1 line-clamp-2 text-xs text-foreground/50">
+                          {formatAutomationDetail(skill)}
+                        </p>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-3 align-top">
+                      <button
+                        type="button"
+                        onClick={() => handleToggle(skill.name, skill.enabled)}
+                        disabled={togglingId === skill.name}
+                        className={`inline-flex min-w-24 items-center justify-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors disabled:opacity-50 ${
+                          skill.enabled
+                            ? "bg-emerald-500/10 text-emerald-400 ring-emerald-400/30 hover:bg-emerald-500/15"
+                            : "bg-foreground/[0.04] text-foreground/60 ring-foreground/[0.14] hover:bg-foreground/[0.08]"
+                        }`}
+                        title={skill.enabled ? "Disable automation" : "Enable automation"}
+                      >
+                        {togglingId === skill.name ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : skill.enabled ? (
+                          "Enabled"
+                        ) : (
+                          "Disabled"
+                        )}
+                      </button>
+                    </TableCell>
+                    <TableCell className="py-3 text-xs text-foreground/70">{formatLatestRun(skill)}</TableCell>
+                    <TableCell className="py-3 text-xs text-foreground/70">
+                      {formatUpdatedDate(skill.updated_at)}
+                    </TableCell>
+                    <TableCell className="py-2 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => handleTryAutomation(skill.name)}
+                          disabled={testingName === skill.name}
+                          className="rounded-lg p-2 text-foreground/35 hover:bg-blue-400/10 hover:text-blue-400/90 disabled:opacity-50"
+                          title="Try automation"
+                        >
+                          {testingName === skill.name ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Play size={14} strokeWidth={1.5} />
+                          )}
+                        </button>
+                        <button
+                          onClick={() =>
+                            router.push(
+                              `/chat/skills/${encodeURIComponent(skill.name)}`
+                            )
+                          }
+                          className="rounded-lg p-2 text-foreground/35 hover:bg-foreground/[0.06] hover:text-foreground/65"
+                          title="Edit"
+                        >
+                          <Pencil size={14} strokeWidth={1.5} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(skill.name)}
+                          disabled={deletingName === skill.name}
+                          className="rounded-lg p-2 text-foreground/35 hover:bg-red-400/10 hover:text-red-400 disabled:opacity-50"
+                          title="Delete"
+                        >
+                          {deletingName === skill.name ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} strokeWidth={1.5} />
+                          )}
+                        </button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
     </div>

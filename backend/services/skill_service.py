@@ -409,7 +409,9 @@ def list_skills(user_id: str) -> list[dict]:
         .select(
             "id, name, description, enabled, "
             "schedule_enabled, schedule_type, schedule_days, schedule_time, schedule_timezone, "
+            "last_scheduled_run_key, "
             "trigger_enabled, trigger_provider, trigger_event, trigger_filters, "
+            "last_trigger_event_key, "
             "created_at, updated_at"
         )
         .eq("user_id", user_id)
@@ -438,7 +440,9 @@ def get_skill_record(user_id: str, skill_name: str) -> dict | None:
         .select(
             "id, name, description, enabled, "
             "schedule_enabled, schedule_type, schedule_days, schedule_time, schedule_timezone, "
+            "last_scheduled_run_key, "
             "trigger_enabled, trigger_provider, trigger_event, trigger_filters, "
+            "last_trigger_event_key, "
             "created_at, updated_at"
         )
         .eq("user_id", user_id)

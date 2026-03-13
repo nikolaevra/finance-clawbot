@@ -782,6 +782,101 @@ def send_draft_by_message_id(
     }
 
 
+# ── update_draft_by_message_id ───────────────────────────────────────
+
+
+def update_draft_by_message_id(
+    credentials_json: str,
+    message_id: str,
+    body: str,
+) -> dict:
+    """Update an existing Gmail draft's message body by draft message ID."""
+    log.info("update_draft_by_message_id message_id=%s", message_id)
+    service = _build_service(credentials_json)
+
+    draft_id: str | None = None
+    page_token: str | None = None
+    scanned_pages = 0
+
+    while True:
+        scanned_pages += 1
+        request_kwargs: dict[str, Any] = {"userId": "me", "maxResults": 100}
+        if page_token:
+            request_kwargs["pageToken"] = page_token
+        page = service.users().drafts().list(**request_kwargs).execute()
+
+        for draft in page.get("drafts", []) or []:
+            draft_message_id = (draft.get("message") or {}).get("id")
+            if draft_message_id == message_id:
+                draft_id = draft.get("id")
+                break
+
+        if draft_id:
+            break
+
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+
+    if not draft_id:
+        raise ValueError(
+            f"Draft not found for message_id={message_id} (scanned_pages={scanned_pages})"
+        )
+
+    draft_detail = (
+        service.users()
+        .drafts()
+        .get(
+            userId="me",
+            id=draft_id,
+            format="metadata",
+            metadataHeaders=["To", "Cc", "Subject", "In-Reply-To", "References"],
+        )
+        .execute()
+    )
+    message = draft_detail.get("message") or {}
+    thread_id = message.get("threadId")
+    headers = {
+        str(h.get("name", "")).lower(): str(h.get("value", ""))
+        for h in (message.get("payload", {}) or {}).get("headers", []) or []
+    }
+
+    mime = MIMEMultipart()
+    if headers.get("to"):
+        mime["to"] = headers["to"]
+    if headers.get("subject"):
+        mime["subject"] = headers["subject"]
+    if headers.get("cc"):
+        mime["cc"] = headers["cc"]
+    if headers.get("in-reply-to"):
+        mime["In-Reply-To"] = headers["in-reply-to"]
+    if headers.get("references"):
+        mime["References"] = headers["references"]
+    mime.attach(MIMEText(body, "plain"))
+
+    raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("ascii")
+    update_body: dict[str, Any] = {
+        "id": draft_id,
+        "message": {"raw": raw},
+    }
+    if thread_id:
+        update_body["message"]["threadId"] = thread_id
+
+    updated = (
+        service.users()
+        .drafts()
+        .update(userId="me", id=draft_id, body=update_body)
+        .execute()
+    )
+    updated_message = updated.get("message") or {}
+    return {
+        "id": updated.get("id"),
+        "message_id": updated_message.get("id"),
+        "threadId": updated_message.get("threadId"),
+        "labelIds": updated_message.get("labelIds", []),
+    }
+
+
 # ── reply_message ────────────────────────────────────────────────────
 
 

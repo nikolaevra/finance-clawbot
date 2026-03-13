@@ -134,10 +134,12 @@ export interface Skill {
   schedule_days?: number[] | null;
   schedule_time?: string | null;
   schedule_timezone?: string | null;
+  last_scheduled_run_key?: string | null;
   trigger_enabled?: boolean;
   trigger_provider?: "gmail" | null;
   trigger_event?: "new_email" | null;
   trigger_filters?: Record<string, unknown> | null;
+  last_trigger_event_key?: string | null;
   created_at: string;
   updated_at: string;
 }

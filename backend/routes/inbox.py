@@ -17,6 +17,7 @@ from services.gmail_service import (
     send_draft_by_message_id,
     send_message,
     trash_message,
+    update_draft_by_message_id,
 )
 from services.supabase_service import get_supabase
 from tasks.email_sync_tasks import hydrate_message_bodies, sync_gmail_history_delta
@@ -640,6 +641,63 @@ def inbox_send_draft(message_id: str):
         hydrate_message_bodies.delay(integration["id"], [sent["id"]])
     sync_gmail_history_delta.delay(integration["id"])
     return jsonify(sent), 201
+
+
+@inbox_bp.route("/inbox/drafts/<message_id>", methods=["PATCH"])
+@require_auth
+def inbox_update_draft(message_id: str):
+    message_id = (message_id or "").strip()
+    if not message_id:
+        return jsonify({"error": "message_id is required"}), 400
+
+    body = request.get_json(silent=True) or {}
+    draft_body = body.get("body")
+    if not isinstance(draft_body, str):
+        return jsonify({"error": "body must be a string"}), 400
+
+    integration = _get_gmail_integration(g.user_id)
+    if not integration:
+        return jsonify({"error": "Gmail integration not connected"}), 404
+
+    sb = get_supabase()
+    rows = (
+        sb.table("emails")
+        .select("gmail_message_id, gmail_thread_id, is_draft, label_ids_json")
+        .eq("user_id", g.user_id)
+        .eq("integration_id", integration["id"])
+        .eq("gmail_message_id", message_id)
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return jsonify({"error": "Draft message not found"}), 404
+
+    row = rows[0]
+    labels = row.get("label_ids_json") or []
+    if not row.get("is_draft") and "DRAFT" not in labels:
+        return jsonify({"error": "Message is not a draft"}), 400
+
+    try:
+        updated = update_draft_by_message_id(
+            integration["account_token"],
+            message_id=message_id,
+            body=draft_body,
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception:
+        log.exception(
+            "inbox_update_draft_failed user=%s integration_id=%s message_id=%s",
+            g.user_id,
+            integration["id"],
+            message_id,
+        )
+        return jsonify({"error": "Failed to update draft"}), 502
+
+    hydrate_message_bodies.delay(integration["id"], [message_id])
+    sync_gmail_history_delta.delay(integration["id"])
+    return jsonify(updated), 200
 
 
 @inbox_bp.route("/inbox/messages/<message_id>/read", methods=["POST"])
