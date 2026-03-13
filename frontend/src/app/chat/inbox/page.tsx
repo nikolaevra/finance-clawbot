@@ -150,6 +150,11 @@ function mergeUniqueThreads(existing: EmailThread[], incoming: EmailThread[]): E
   return Array.from(map.values());
 }
 
+function getCollapsedMessagePreview(message: EmailMessage): string {
+  const raw = message.body_text || message.snippet || "(No content)";
+  return raw.replace(/\s+/g, " ").trim();
+}
+
 export default function InboxPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -183,11 +188,13 @@ export default function InboxPage() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeCc, setComposeCc] = useState("");
-  const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+  const [expandedMessageIds, setExpandedMessageIds] = useState<Set<string>>(new Set());
   const routeEmailId = searchParams.get("emailId");
   const loadContextRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const listEndRef = useRef<HTMLDivElement | null>(null);
+  const threadScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastMessageRef = useRef<HTMLElement | null>(null);
 
   const selectedThread = useMemo(
     () => threads.find((t) => t.gmail_thread_id === activeThreadId) || null,
@@ -297,11 +304,10 @@ export default function InboxPage() {
       const data = await fetchInboxThread(threadId);
       const nextMessages = data.messages || [];
       setMessages(nextMessages);
-      setExpandedMessageId(
-        nextMessages.length
-          ? nextMessages[nextMessages.length - 1].gmail_message_id
-          : null
-      );
+      setExpandedMessageIds(() => {
+        if (!nextMessages.length) return new Set();
+        return new Set([nextMessages[nextMessages.length - 1].gmail_message_id]);
+      });
       setAttachmentsByMessage(data.attachments_by_message || {});
 
       const unreadIds = nextMessages
@@ -366,6 +372,18 @@ export default function InboxPage() {
   }, [isPreviewOpen, activeThreadId, loadThread]);
 
   useEffect(() => {
+    if (!isPreviewOpen || loadingThreadDetail || messages.length === 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (lastMessageRef.current) {
+        lastMessageRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
+      } else if (threadScrollRef.current) {
+        threadScrollRef.current.scrollTop = threadScrollRef.current.scrollHeight;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isPreviewOpen, loadingThreadDetail, messages, activeThreadId]);
+
+  useEffect(() => {
     if (!pendingComposerMode || !latestMessage || !isPreviewOpen) return;
     setPendingComposerMode(null);
     if (pendingComposerMode === "reply" || pendingComposerMode === "forward") {
@@ -421,7 +439,7 @@ export default function InboxPage() {
     setIsPreviewOpen(false);
     setActiveThreadId(null);
     setMessages([]);
-    setExpandedMessageId(null);
+    setExpandedMessageIds(new Set());
     setAttachmentsByMessage({});
   };
 
@@ -439,14 +457,23 @@ export default function InboxPage() {
     syncInboxUrl(null);
     setActiveThreadId(null);
     setMessages([]);
-    setExpandedMessageId(null);
+    setExpandedMessageIds(new Set());
     setAttachmentsByMessage({});
     setIsPreviewOpen(true);
     openComposer("new");
   };
 
-  const toggleExpandedMessage = (messageId: string) => {
-    setExpandedMessageId((current) => (current === messageId ? null : messageId));
+  const toggleExpandedMessage = (messageId: string, isLastMessage: boolean) => {
+    if (isLastMessage) return;
+    setExpandedMessageIds((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
   };
 
   const submitComposer = async () => {
@@ -842,24 +869,31 @@ export default function InboxPage() {
                   </div>
 
                   {selectedThread && (
-                    <div className="mx-auto w-full max-w-3xl rounded-2xl border border-blue-400/25 bg-[radial-gradient(ellipse_at_top,rgba(96,165,250,0.22),rgba(59,130,246,0.06)_45%,rgba(15,23,42,0.04)_100%)] px-5 py-4 shadow-[0_12px_40px_-24px_rgba(59,130,246,0.9)]">
-                      <div className="mb-2 flex items-center justify-center gap-2 text-blue-300/95">
-                        <Sparkles size={14} />
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em]">
-                          AI Thread Summary
-                        </p>
+                    <div className="my-2 px-2 md:my-3 md:px-3">
+                      <div className="relative mx-auto w-full max-w-4xl overflow-hidden rounded-3xl border border-blue-300/30 bg-[radial-gradient(circle_at_50%_0%,rgba(96,165,250,0.3),rgba(59,130,246,0.09)_42%,rgba(15,23,42,0.04)_100%)] px-6 py-6 shadow-[0_22px_70px_-34px_rgba(59,130,246,0.95)] md:px-8 md:py-7">
+                        <div className="pointer-events-none absolute inset-x-12 top-0 h-20 rounded-full bg-blue-300/20 blur-3xl" />
+                        <div className="pointer-events-none absolute -left-14 top-1/2 h-28 w-28 -translate-y-1/2 rounded-full bg-indigo-300/10 blur-3xl" />
+                        <div className="pointer-events-none absolute -right-14 top-1/2 h-28 w-28 -translate-y-1/2 rounded-full bg-cyan-300/10 blur-3xl" />
+                        <div className="relative">
+                          <div className="mb-3 flex items-center justify-center gap-2 text-blue-200/95">
+                            <Sparkles size={15} />
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.2em]">
+                              AI-Generated Thread Summary
+                            </p>
+                          </div>
+                          <p className="mx-auto max-w-3xl text-center text-[15px] leading-relaxed text-foreground/95">
+                            {selectedThread.ai_summary_preview ||
+                              selectedThread.snippet ||
+                              "No summary available."}
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-center text-sm leading-relaxed text-foreground/90">
-                        {selectedThread.ai_summary_preview ||
-                          selectedThread.snippet ||
-                          "No summary available."}
-                      </p>
                     </div>
                   )}
                 </div>
               </header>
 
-              <div className="flex-1 overflow-y-auto p-5">
+              <div ref={threadScrollRef} className="flex-1 overflow-y-auto p-5">
                 {loadingThreadDetail ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 size={18} className="animate-spin text-foreground/30" />
@@ -872,18 +906,24 @@ export default function InboxPage() {
                   <div className="text-sm text-foreground/60">No messages synced for this thread yet.</div>
                 ) : (
                   <div className="space-y-4">
-                    {messages.map((message) => (
+                    {messages.map((message, index) => {
+                      const isLastMessage = index === messages.length - 1;
+                      const isExpanded = expandedMessageIds.has(message.gmail_message_id);
+                      return (
                       <article
                         key={message.gmail_message_id}
+                        ref={isLastMessage ? lastMessageRef : null}
                         className="rounded-2xl border border-foreground/[0.09] bg-card/90 p-4"
                       >
                         <button
                           type="button"
-                          onClick={() => toggleExpandedMessage(message.gmail_message_id)}
+                          onClick={() =>
+                            toggleExpandedMessage(message.gmail_message_id, isLastMessage)
+                          }
                           className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-0.5 text-left hover:bg-foreground/[0.04]"
                         >
                           <div className="flex min-w-0 items-center gap-2">
-                            {expandedMessageId === message.gmail_message_id ? (
+                            {isExpanded ? (
                               <ChevronDown size={15} className="shrink-0 text-foreground/60" />
                             ) : (
                               <ChevronRight size={15} className="shrink-0 text-foreground/60" />
@@ -906,7 +946,13 @@ export default function InboxPage() {
                           </p>
                         </button>
 
-                        {expandedMessageId === message.gmail_message_id && (
+                        {!isExpanded && (
+                          <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-foreground/60">
+                            {getCollapsedMessagePreview(message)}
+                          </p>
+                        )}
+
+                        {isExpanded && (
                           <>
                             <p className="mt-2 text-xs text-foreground/55">
                               To: {(message.to_json || []).map((recipient) => recipient.email).join(", ")}
@@ -1007,7 +1053,8 @@ export default function InboxPage() {
                           </>
                         )}
                       </article>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
 
