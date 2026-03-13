@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import secrets
 from typing import Any
 
@@ -22,6 +23,11 @@ from config import Config
 from services.gmail_service import build_oauth_state, parse_oauth_state
 
 log = logging.getLogger(__name__)
+
+# Google may return a superset of scopes for users who previously authorized
+# the same OAuth client (for example Gmail + Workspace together). Relax strict
+# scope equality checks to avoid exchange failures on supersets.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
@@ -50,7 +56,6 @@ def get_auth_url(user_id: str) -> str:
     flow.code_verifier = code_verifier
     url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
         prompt="consent",
         state=build_oauth_state(user_id, code_verifier),
         code_challenge_method="S256",
